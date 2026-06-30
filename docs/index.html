@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Curbsiders Trial Repository</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <p class="eyebrow">Curbsiders Evidence Browser</p>
+        <h1>Turn curated evidence into teachable practice-changing chains.</h1>
+        <p class="subtitle">
+          Browse and connect clinical trials, observational studies, reviews, and guidelines referenced on
+          <a href="https://thecurbsiders.com/category/curbsiders-podcast" target="_blank" rel="noopener">
+            The Curbsiders Internal Medicine Podcast
+          </a>.
+        </p>
+      </div>
+      <div id="hero-stats" class="hero-stats" aria-live="polite">Loading dataset…</div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar" aria-label="Filters">
+      <section class="panel panel-search">
+        <div class="panel-heading">
+          <h2>Search</h2>
+          <p>Use broad search, then narrow by topic or evidence type.</p>
+        </div>
+
+        <label class="field-label" for="search-input">Everything</label>
+        <div class="search-wrap">
+          <svg class="search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="8.5" cy="8.5" r="5.5"></circle>
+            <path d="M15 15l-3-3"></path>
+          </svg>
+          <input id="search-input" type="search" placeholder="Trial name, drug, condition, author…" autocomplete="off">
+        </div>
+
+        <label class="field-label" for="topic-input">Teaching topic</label>
+        <input id="topic-input" type="search" list="topic-suggestions" placeholder="AFib, CKD, statins, COPD…" autocomplete="off">
+        <datalist id="topic-suggestions"></datalist>
+
+        <div id="topic-presets" class="chip-cloud" aria-label="Suggested topics"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Study Type</h2>
+          <p>Separate RCTs from reviews, guidelines, and observational data.</p>
+        </div>
+        <div id="study-type-filters" class="button-group" aria-label="Study type filters"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Publication Era</h2>
+          <p>Use publication year when you want landmark versus recent evidence.</p>
+        </div>
+        <div id="era-filters" class="button-group" aria-label="Publication era filters"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Evidence Links</h2>
+          <p>Prefer records with an outbound article link when you want the paper fast.</p>
+        </div>
+        <div id="pubmed-filters" class="button-group" aria-label="PubMed filters"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Specialty</h2>
+          <p>Multi-select to mix general medicine with organ-system domains.</p>
+        </div>
+        <div id="specialty-filters" class="facet-list" aria-label="Specialty filters"></div>
+      </section>
+    </aside>
+
+    <section class="content">
+      <div class="content-top">
+        <div class="content-heading">
+          <p class="eyebrow">Teaching View</p>
+          <h2>Build from clinical question to bedside teaching point.</h2>
+        </div>
+        <div class="content-actions">
+          <div class="view-toggle" aria-label="View mode">
+            <button class="view-toggle-btn active" type="button" data-view-mode="teaching">Knowledge chains</button>
+            <button class="view-toggle-btn" type="button" data-view-mode="browser">Evidence browser</button>
+          </div>
+          <div class="quick-actions">
+            <button id="clear-filters-btn" class="ghost-btn" type="button">Clear filters</button>
+            <button id="copy-link-btn" class="ghost-btn" type="button">Copy view link</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="teaching-view" class="teaching-view"></div>
+
+      <div id="browser-view" class="browser-view" hidden>
+        <div id="active-filters" class="active-filters" aria-live="polite"></div>
+
+        <div class="results-bar">
+          <div>
+            <span id="results-count" class="results-count"></span>
+            <p id="results-subtitle" class="results-subtitle"></p>
+          </div>
+          <label class="sort-wrap" for="sort-select">
+            <span>Sort</span>
+            <select id="sort-select">
+              <option value="relevance">Relevance</option>
+              <option value="episode-desc">Newest Curbsiders mention</option>
+              <option value="episode-asc">Oldest Curbsiders mention</option>
+              <option value="mentions-desc">Most mentioned</option>
+              <option value="episodes-desc">Most episodes</option>
+              <option value="year-desc">Newest publication year</option>
+              <option value="year-asc">Oldest publication year</option>
+              <option value="title-asc">Title A-Z</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="cards-grid" class="cards-grid"></div>
+        <div id="pagination" class="pagination"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Data extracted from
+      <a href="https://thecurbsiders.com" target="_blank" rel="noopener">The Curbsiders Podcast</a>
+      show notes. For educational use only.
+    </p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
