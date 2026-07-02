@@ -275,12 +275,41 @@ def _looks_like_raw_url_label(link: dict) -> bool:
     return label.startswith(("http://", "https://")) or normalize_pubmed_url(label) == normalize_pubmed_url(url)
 
 
+def normalize_nct_id(value) -> str | None:
+    cleaned = clean_text(value)
+    if not cleaned:
+        return None
+    match = re.search(r"NCT\d{8}", cleaned, re.IGNORECASE)
+    return match.group(0).upper() if match else None
+
+
+def normalize_sample_size(value) -> int | None:
+    if value in (None, "", "null"):
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    match = re.search(r"\d[\d,]*", str(value))
+    if not match:
+        return None
+    try:
+        number = int(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
+    return number if number > 0 else None
+
+
 def normalize_trial_record(trial: dict) -> dict | None:
     citation_label = clean_text(trial.get("citation_label"))
     paper_title = clean_text(trial.get("paper_title"))
     pubmed_url = normalize_pubmed_url(trial.get("pubmed_url"))
     if not any([citation_label, paper_title, pubmed_url]):
         return None
+
+    segment_index = trial.get("segment_index")
+    if not isinstance(segment_index, int) or isinstance(segment_index, bool) or segment_index < 0:
+        segment_index = None
 
     record = {
         "citation_label": citation_label,
@@ -291,6 +320,14 @@ def normalize_trial_record(trial: dict) -> dict | None:
         "context_topic": clean_text(trial.get("context_topic")),
         "study_type": normalize_study_type(trial.get("study_type")),
         "specialty_tags": normalize_specialty_tags(trial.get("specialty_tags")),
+        # Deterministic enrichment (may be absent on un-enriched mentions).
+        "segment": clean_text(trial.get("segment")),
+        "segment_index": segment_index,
+        "nct_id": normalize_nct_id(trial.get("nct_id")),
+        "sample_size": normalize_sample_size(trial.get("sample_size")),
+        "journal": clean_text(trial.get("journal")),
+        "episode_category": clean_text(trial.get("episode_category")),
+        "secondary_categories": normalize_specialty_tags(trial.get("secondary_categories")),
         "episode_number": trial.get("episode_number"),
         "episode_title": clean_text(trial.get("episode_title")),
         "episode_url": clean_text(trial.get("episode_url")),
@@ -347,6 +384,10 @@ def merge_trial_records(records: list[dict]) -> dict:
         for record in records
         for tag in normalize_specialty_tags(record.get("specialty_tags"))
     })
+    # Paper-level detail is stable across mentions; take the most common non-null.
+    merged["nct_id"] = most_common_value([normalize_nct_id(r.get("nct_id")) for r in records])
+    merged["sample_size"] = most_common_value([normalize_sample_size(r.get("sample_size")) for r in records])
+    merged["journal"] = most_common_value([clean_text(r.get("journal")) for r in records])
     merged["episode_number"] = most_common_value([r.get("episode_number") for r in records])
     merged["episode_title"] = choose_preferred_text(r.get("episode_title") for r in records)
     merged["episode_url"] = choose_preferred_text(r.get("episode_url") for r in records)
@@ -405,6 +446,12 @@ def build_canonical_trial_records(trials: list[dict]) -> list[dict]:
             for record in records
             for tag in normalize_specialty_tags(record.get("specialty_tags"))
         })
+        segments = sorted({
+            segment for segment in (clean_text(r.get("segment")) for r in records) if segment
+        })
+        episode_categories = sorted({
+            category for category in (clean_text(r.get("episode_category")) for r in records) if category
+        })
 
         canonical_records.append({
             "canonical_key": "|".join(str(part) for part in key),
@@ -415,6 +462,11 @@ def build_canonical_trial_records(trials: list[dict]) -> list[dict]:
             "brief_summary": merged.get("brief_summary"),
             "study_type": merged.get("study_type"),
             "specialty_tags": specialty_tags,
+            "nct_id": merged.get("nct_id"),
+            "sample_size": merged.get("sample_size"),
+            "journal": merged.get("journal"),
+            "segments": segments,
+            "episode_categories": episode_categories,
             "context_topic": merged.get("context_topic"),
             "context_topics": context_topics,
             "episode_titles": [ep.get("episode_title") for ep in episode_list if ep.get("episode_title")],

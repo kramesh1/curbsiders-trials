@@ -2,8 +2,9 @@
 
 This repository builds a searchable teaching reference of clinical trials, observational studies, systematic reviews, meta-analyses, and guidelines mentioned on The Curbsiders Internal Medicine Podcast.
 
-The static site has two working modes:
+The static site has three working modes:
 
+- **Teaching pearls** (default): verbatim clinical pearls pulled from the show-note `Pearls` sections, each linked to the trials, guidelines, and reviews cited in the same episode. This is the fastest path to a quick teaching point plus its evidence.
 - **Knowledge chains**: computed teaching pathways that start with a bedside question and surface representative source records.
 - **Evidence browser**: searchable/filterable canonical records with backlinks to the Curbsiders episodes where each paper or trial was mentioned.
 
@@ -23,14 +24,15 @@ The site is static, but it must be served over HTTP so the browser can fetch `do
 
 ## Current status
 
-As of June 29, 2026, the extraction pipeline has been run across the full scraped episode set and the site dataset was rebuilt.
+As of July 1, 2026, the extraction pipeline has been run across the full scraped episode set, the teaching-pearls layer was added, and the site dataset was rebuilt.
 
 - `555` episodes marked completed in [data/extraction_state.json](data/extraction_state.json)
 - `0` failed episodes
 - `6797` extracted trial mentions in [data/trials.json](data/trials.json)
-- `6221` canonical trial records in [docs/data/trials.json](docs/data/trials.json)
+- `6230` canonical trial records in [docs/data/trials.json](docs/data/trials.json)
 - `533` episodes with at least one extracted literature mention
-- `5904` canonical records with an outbound literature link
+- `5903` canonical records with an outbound literature link
+- `1271` canonical teaching pearls in [docs/data/pearls.json](docs/data/pearls.json), of which `892` link to at least one supporting citation
 
 The missing `22` episodes are currently zero-trial episodes, not ingestion failures.
 
@@ -45,8 +47,14 @@ The missing `22` episodes are currently zero-trial episodes, not ingestion failu
 - [data/trials.json](data/trials.json)
   Episode-level extracted trial mentions after within-episode normalization and deduplication.
 
+- [data/pearls.json](data/pearls.json)
+  Episode-level teaching pearls extracted verbatim from show-note `Pearls` sections, each with the supporting citations found in the same episode.
+
 - [docs/data/trials.json](docs/data/trials.json)
   Canonicalized site dataset with one record per trial or paper plus backlinks to all episodes mentioning it.
+
+- [docs/data/pearls.json](docs/data/pearls.json)
+  Canonicalized pearls for the site: one record per unique pearl, with episode backlinks and links (by `canonical_key`) into the trial records that support it.
 
 - `data/batches/`
   Optional local OpenAI Batch API inputs and outputs. These are ignored for sharing because they can contain request payloads, provider object IDs, and machine-specific paths.
@@ -65,11 +73,45 @@ The missing `22` episodes are currently zero-trial episodes, not ingestion failu
 
    Preferred workflow for larger reruns and backfills. It builds a saved local batch directory under `data/batches/`, submits one request per show-note chunk, then downloads and merges results into the local dataset.
 
-4. `python scripts/build_site.py`
+4. `python scripts/extract_pearls.py`
 
-   Canonicalizes duplicate mentions across episodes and rewrites [docs/data/trials.json](docs/data/trials.json) for the browser UI.
+   Deterministically extracts the show-note `Pearls` sections into [data/pearls.json](data/pearls.json) and links each pearl to the episode's already-extracted trial mentions. No model calls, so it is cheap and safe to re-run any time.
+
+5. `python scripts/build_site.py`
+
+   Canonicalizes duplicate trial mentions across episodes and rewrites [docs/data/trials.json](docs/data/trials.json), and canonicalizes pearls into [docs/data/pearls.json](docs/data/pearls.json), for the browser UI.
 
 The site is a static app rooted at [docs/index.html](docs/index.html).
+
+## Incremental ingest (recommended for new episodes)
+
+Instead of running the steps above by hand, use the orchestrator, which does model
+work only on episodes that are new since the last run and then rebuilds the
+deterministic layers (pearls + site) and validates:
+
+```bash
+python scripts/ingest.py                 # scrape → extract new → pearls → site → validate
+python scripts/ingest.py --dry-run       # report which episodes are new, change nothing
+python scripts/ingest.py --skip-scrape   # reuse the current episodes.json
+python scripts/ingest.py --backend batch # extract new episodes via the OpenAI Batch API
+```
+
+Because Curbsiders publishes roughly weekly, each incremental run typically
+extracts only one or two episodes. The extractor is resumable and pearls are
+always rebuilt, so linking picks up any newly extracted trials.
+
+### Scheduling weekly ingest
+
+`scripts/ingest.py` is safe to run on a timer in an environment that has
+`OPENAI_API_KEY` and network access. A weekly cron entry (Sundays 06:00), logging
+to the repo:
+
+```cron
+0 6 * * 0  cd /path/to/curbsiders_to_trials && /path/to/.venv/bin/python scripts/ingest.py >> ingest.log 2>&1
+```
+
+On macOS you can use the same command via `launchd` or `cron`. The run is
+idempotent: with no new episodes it validates and exits without spending tokens.
 
 ## Batch workflow
 

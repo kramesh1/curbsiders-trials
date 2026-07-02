@@ -2,6 +2,20 @@
 
 This repository is now past the extraction/backfill phase. The next stage is QA, enrichment, and preparation for teaching use.
 
+## Teaching-pearls layer (added July 2026)
+
+A deterministic pearls layer now sits on top of the trial extraction:
+
+- `scripts/extract_pearls.py` pulls verbatim pearls from the show-note `Pearls`
+  sections into `data/pearls.json` and links each to the episode's trial mentions.
+- `scripts/build_site.py` canonicalizes them into `docs/data/pearls.json`.
+- The site's default **Teaching pearls** view surfaces them with their evidence.
+- `scripts/ingest.py` is the incremental orchestrator for new episodes.
+
+Open follow-ups for this layer: tune the pearl→trial link threshold in
+`pearl_utils.DEFAULT_MIN_LINK_SCORE`, and consider a reviewer pass over pearls
+whose linked evidence looks off-topic.
+
 ## Current baseline
 
 - Full scrape completed in [data/episodes.json](data/episodes.json)

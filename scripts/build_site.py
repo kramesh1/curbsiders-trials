@@ -11,13 +11,17 @@ from pathlib import Path
 
 try:
     from scripts.trial_utils import build_canonical_trial_records
+    from scripts.pearl_utils import build_canonical_pearls
 except ImportError:
     from trial_utils import build_canonical_trial_records
+    from pearl_utils import build_canonical_pearls
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DOCS_DATA_DIR = Path(__file__).parent.parent / "docs" / "data"
 TRIALS_FILE = DATA_DIR / "trials.json"
+PEARLS_FILE = DATA_DIR / "pearls.json"
 OUTPUT_FILE = DOCS_DATA_DIR / "trials.json"
+PEARLS_OUTPUT_FILE = DOCS_DATA_DIR / "pearls.json"
 
 
 def main():
@@ -55,6 +59,32 @@ def main():
     print(f"  Episodes covered: {len(episodes)}")
     print(f"  Top specialties: {specialty_counts.most_common(8)}")
     print(f"  Study types:     {dict(study_type_counts.most_common())}")
+
+    build_pearls_site()
+
+
+def build_pearls_site():
+    """Canonicalize data/pearls.json into docs/data/pearls.json for the site."""
+    DOCS_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if not PEARLS_FILE.exists():
+        # Keep the site loadable even before the first pearls extraction.
+        with open(PEARLS_OUTPUT_FILE, "w") as f:
+            json.dump([], f)
+        print(f"\nNo {PEARLS_FILE} yet; wrote empty {PEARLS_OUTPUT_FILE}.")
+        return
+
+    with open(PEARLS_FILE) as f:
+        pearls = json.load(f)
+
+    canonical_pearls = build_canonical_pearls(pearls)
+    with open(PEARLS_OUTPUT_FILE, "w") as f:
+        json.dump(canonical_pearls, f, ensure_ascii=False, separators=(",", ":"))
+
+    with_citation = sum(1 for pearl in canonical_pearls if pearl.get("supporting_citations"))
+    print(f"\nPearl site data written to {PEARLS_OUTPUT_FILE}")
+    print(f"  Pearl statements (raw):  {len(pearls)}")
+    print(f"  Canonical pearls:        {len(canonical_pearls)}")
+    print(f"  Pearls with a citation:  {with_citation}")
 
 
 if __name__ == "__main__":

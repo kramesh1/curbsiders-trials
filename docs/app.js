@@ -140,11 +140,19 @@ const state = {
   pubmedMode: 'all',
   sort: 'episode-desc',
   sortManuallyChosen: false,
-  viewMode: 'teaching',
+  viewMode: 'pearls',
   page: 1,
+  pearlQuery: '',
+  pearlSpecialties: new Set(),
+  pearlCategories: new Set(),
+  pearlLinkedOnly: false,
 };
 
 let allTrials = [];
+let allPearls = [];
+let filteredPearls = [];
+let pearlSpecialtyCounts = [];
+let pearlCategoryCounts = [];
 let filteredTrials = [];
 let teachingPathways = [];
 let fuse = null;
@@ -173,15 +181,44 @@ async function init() {
     return;
   }
 
+  await loadPearls();
+
   computeFacets();
+  computePearlFacets();
   buildSearchIndex();
   computeTeachingPathways();
   hydrateStateFromUrl();
   renderHeroStats();
   renderFilterControls();
   renderTeachingView();
+  renderPearlsView();
   wireControls();
   applyFilters();
+  applyPearlFilters();
+}
+
+async function loadPearls() {
+  try {
+    const resp = await fetch('data/pearls.json');
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    allPearls = await resp.json();
+  } catch (err) {
+    // Pearls are an optional layer; the rest of the site still works without them.
+    allPearls = [];
+  }
+}
+
+function computePearlFacets() {
+  pearlSpecialtyCounts = countAndSort(
+    allPearls.flatMap(pearl => pearl.specialty_tags || []),
+    label => label
+  );
+  pearlCategoryCounts = countAndSort(
+    allPearls.flatMap(pearl => pearl.episode_categories || []),
+    label => label
+  );
 }
 
 function computeFacets() {
@@ -397,7 +434,8 @@ function hydrateStateFromUrl() {
   state.pubmedMode = params.get('pubmed') || 'all';
   state.sort = params.get('sort') || (activeSearchQuery() ? 'relevance' : 'episode-desc');
   state.sortManuallyChosen = params.has('sort');
-  state.viewMode = params.get('view') === 'browser' ? 'browser' : 'teaching';
+  const viewParam = params.get('view');
+  state.viewMode = ['browser', 'teaching', 'pearls'].includes(viewParam) ? viewParam : 'pearls';
   state.page = clampPage(Number.parseInt(params.get('page') || '1', 10));
 
   const specialties = params.get('specialties');
@@ -437,7 +475,7 @@ function syncUrl() {
   if (state.pubmedMode !== 'all') {
     params.set('pubmed', state.pubmedMode);
   }
-  if (state.viewMode !== 'teaching') {
+  if (state.viewMode !== 'pearls') {
     params.set('view', state.viewMode);
   }
   if (state.sort !== defaultSort()) {
@@ -627,9 +665,37 @@ function wireControls() {
   document.body.addEventListener('click', event => {
     const viewButton = event.target.closest('[data-view-mode]');
     if (viewButton) {
-      state.viewMode = viewButton.dataset.viewMode === 'browser' ? 'browser' : 'teaching';
+      const requested = viewButton.dataset.viewMode;
+      state.viewMode = ['browser', 'teaching', 'pearls'].includes(requested) ? requested : 'pearls';
       renderViewMode();
       syncUrl();
+      return;
+    }
+
+    const pearlCategoryButton = event.target.closest('[data-pearl-category]');
+    if (pearlCategoryButton) {
+      toggleSetValue(state.pearlCategories, pearlCategoryButton.dataset.pearlCategory);
+      applyPearlFilters();
+      return;
+    }
+
+    const pearlSpecialtyButton = event.target.closest('[data-pearl-specialty]');
+    if (pearlSpecialtyButton) {
+      toggleSetValue(state.pearlSpecialties, pearlSpecialtyButton.dataset.pearlSpecialty);
+      applyPearlFilters();
+      return;
+    }
+
+    const pearlLinkedToggle = event.target.closest('[data-pearl-linked-toggle]');
+    if (pearlLinkedToggle) {
+      state.pearlLinkedOnly = !state.pearlLinkedOnly;
+      applyPearlFilters();
+      return;
+    }
+
+    const pearlEvidenceButton = event.target.closest('[data-pearl-evidence]');
+    if (pearlEvidenceButton) {
+      showEvidenceForCitation(pearlEvidenceButton.dataset.pearlEvidence);
       return;
     }
 
@@ -1034,10 +1100,12 @@ function startsNearFieldBeginning(value, term) {
 }
 
 function renderViewMode() {
+  const pearlsView = document.getElementById('pearls-view');
   const teachingView = document.getElementById('teaching-view');
   const browserView = document.getElementById('browser-view');
   const modeButtons = document.querySelectorAll('[data-view-mode]');
 
+  pearlsView.hidden = state.viewMode !== 'pearls';
   teachingView.hidden = state.viewMode !== 'teaching';
   browserView.hidden = state.viewMode !== 'browser';
   modeButtons.forEach(button => {
@@ -1146,6 +1214,264 @@ function pathwayLabel(pathway) {
     .slice(0, 2)
     .map(cap);
   return tags.length ? tags.join(' + ') : 'Teaching pathway';
+}
+
+function renderPearlsView() {
+  const container = document.getElementById('pearls-view');
+
+  if (!allPearls.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <strong>No pearls yet</strong>
+        <p>Run <code>python scripts/extract_pearls.py</code> and <code>python scripts/build_site.py</code> to generate the teaching pearls layer.</p>
+      </div>
+    `;
+    renderViewMode();
+    return;
+  }
+
+  const linkedCount = allPearls.filter(pearl => (pearl.supporting_citations || []).length).length;
+  const episodeCount = new Set(
+    allPearls.flatMap(pearl => (pearl.episodes || []).map(episode => episode.episode_url).filter(Boolean))
+  ).size;
+
+  container.innerHTML = `
+    <section class="pearls-summary">
+      <div>
+        <p class="section-kicker">Teaching layer</p>
+        <h3>Quick, quotable teaching pearls — each linked to the evidence behind it.</h3>
+        <p>
+          Verbatim clinician takeaways pulled from Curbsiders show notes, paired with the trials,
+          guidelines, and reviews cited in the same episode.
+        </p>
+      </div>
+      <div class="pearls-metrics">
+        <span><strong>${allPearls.length.toLocaleString()}</strong> pearls</span>
+        <span><strong>${linkedCount.toLocaleString()}</strong> with linked evidence</span>
+        <span><strong>${episodeCount.toLocaleString()}</strong> source episodes</span>
+      </div>
+    </section>
+
+    <div class="pearls-controls">
+      <div class="search-wrap pearl-search-wrap">
+        <svg class="search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="8.5" cy="8.5" r="5.5"></circle>
+          <path d="M15 15l-3-3"></path>
+        </svg>
+        <input id="pearl-search" type="search" placeholder="Search pearls: statins, deprescribing, CKD…" autocomplete="off">
+      </div>
+      <button class="ghost-btn pearl-linked-btn" type="button" data-pearl-linked-toggle aria-pressed="false">
+        With evidence only
+      </button>
+    </div>
+
+    <div id="pearl-category-chips" class="chip-cloud pearl-category-chips" aria-label="Filter pearls by episode category"></div>
+
+    <div id="pearl-specialty-chips" class="chip-cloud pearl-specialty-chips" aria-label="Filter pearls by specialty"></div>
+
+    <div class="pearls-resultbar">
+      <span id="pearl-count" class="results-count"></span>
+    </div>
+
+    <div id="pearls-grid" class="pearls-grid"></div>
+  `;
+
+  const searchInput = document.getElementById('pearl-search');
+  searchInput.value = state.pearlQuery;
+  let pearlTimer = null;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(pearlTimer);
+    pearlTimer = window.setTimeout(() => {
+      state.pearlQuery = searchInput.value;
+      applyPearlFilters();
+    }, DEBOUNCE_MS);
+  });
+
+  renderViewMode();
+}
+
+function applyPearlFilters() {
+  if (!allPearls.length) {
+    return;
+  }
+
+  const needle = normalizeText(state.pearlQuery);
+  filteredPearls = allPearls.filter(pearl => {
+    if (state.pearlLinkedOnly && !(pearl.supporting_citations || []).length) {
+      return false;
+    }
+    if (state.pearlSpecialties.size
+      && !(pearl.specialty_tags || []).some(tag => state.pearlSpecialties.has(tag))) {
+      return false;
+    }
+    if (state.pearlCategories.size
+      && !(pearl.episode_categories || []).some(category => state.pearlCategories.has(category))) {
+      return false;
+    }
+    if (needle && !pearlMatchesQuery(pearl, needle)) {
+      return false;
+    }
+    return true;
+  });
+
+  renderPearlCategoryChips();
+  renderPearlSpecialtyChips();
+  renderPearlLinkedToggle();
+
+  const countEl = document.getElementById('pearl-count');
+  if (countEl) {
+    countEl.textContent = `${filteredPearls.length.toLocaleString()} pearl${filteredPearls.length === 1 ? '' : 's'}`;
+  }
+
+  const grid = document.getElementById('pearls-grid');
+  if (!grid) {
+    return;
+  }
+  grid.innerHTML = filteredPearls.length
+    ? filteredPearls.slice(0, 300).map(pearlCardHTML).join('')
+    : `<div class="empty-state"><strong>No matching pearls</strong><p>Try a broader term or clear the specialty filter.</p></div>`;
+}
+
+function pearlMatchesQuery(pearl, needle) {
+  const haystack = normalizeText([
+    pearl.pearl,
+    ...(pearl.topics || []),
+    ...(pearl.clinical_topics || []),
+    ...(pearl.segments || []),
+    ...(pearl.specialty_tags || []),
+    ...(pearl.episode_categories || []),
+    ...(pearl.supporting_citations || []).map(citation => citation.citation_label),
+    ...(pearl.episodes || []).map(episode => episode.episode_title),
+  ].filter(Boolean).join(' '));
+  return haystack.includes(needle);
+}
+
+function renderPearlSpecialtyChips() {
+  const container = document.getElementById('pearl-specialty-chips');
+  if (!container) {
+    return;
+  }
+  container.innerHTML = pearlSpecialtyCounts.map(item => {
+    const active = state.pearlSpecialties.has(item.key);
+    return `
+      <button class="topic-chip${active ? ' active' : ''}" type="button" data-pearl-specialty="${escAttr(item.key)}" aria-pressed="${active}">
+        <span>${esc(cap(item.label))}</span>
+        <span class="chip-count">${item.count}</span>
+      </button>
+    `;
+  }).join('');
+}
+
+function renderPearlCategoryChips() {
+  const container = document.getElementById('pearl-category-chips');
+  if (!container) {
+    return;
+  }
+  container.innerHTML = pearlCategoryCounts.map(item => {
+    const active = state.pearlCategories.has(item.key);
+    return `
+      <button class="topic-chip${active ? ' active' : ''}" type="button" data-pearl-category="${escAttr(item.key)}" aria-pressed="${active}">
+        <span>${esc(cap(item.label))}</span>
+        <span class="chip-count">${item.count}</span>
+      </button>
+    `;
+  }).join('');
+}
+
+function renderPearlLinkedToggle() {
+  const button = document.querySelector('[data-pearl-linked-toggle]');
+  if (button) {
+    button.classList.toggle('active', state.pearlLinkedOnly);
+    button.setAttribute('aria-pressed', state.pearlLinkedOnly ? 'true' : 'false');
+  }
+}
+
+function pearlCardHTML(pearl) {
+  // The segment is the sub-episode topic — more specific than the episode.
+  const segments = (pearl.segments || []).slice(0, 2)
+    .map(segment => `<span class="pearl-segment">${esc(segment)}</span>`).join('');
+  const topics = (pearl.topics || []).slice(0, 3)
+    .map(topic => `<span class="topic-tag">${esc(topic)}</span>`).join('');
+  const specialties = (pearl.specialty_tags || [])
+    .map(tag => `<span class="tag">${esc(cap(tag))}</span>`).join('');
+
+  const citations = (pearl.supporting_citations || []).map(citation => {
+    const label = citation.citation_label || citation.paper_title || 'Cited source';
+    const badge = `<span class="study-badge ${studyBadgeClass(citation.study_type)}">${esc(studyTypeLabel(citation.study_type))}</span>`;
+    const detailBits = [
+      citation.journal,
+      citation.sample_size ? `n=${Number(citation.sample_size).toLocaleString()}` : null,
+      citation.nct_id,
+    ].filter(Boolean);
+    const detail = detailBits.length
+      ? `<span class="pearl-cite-detail">${esc(detailBits.join(' · '))}</span>`
+      : '';
+    const pubmed = citation.pubmed_url
+      ? `<a class="pearl-cite-link" href="${escAttr(safeUrl(citation.pubmed_url))}" target="_blank" rel="noopener">source ↗</a>`
+      : '';
+    return `
+      <div class="pearl-citation">
+        <button class="pearl-cite-name" type="button" data-pearl-evidence="${escAttr(citation.canonical_key)}" title="Show this record in the evidence browser">
+          ${esc(truncate(label, 70))}
+        </button>
+        ${badge}
+        ${detail}
+        ${pubmed}
+      </div>
+    `;
+  }).join('');
+
+  const evidenceBlock = citations
+    ? `<div class="pearl-evidence"><p class="pearl-evidence-title">Supporting evidence</p>${citations}</div>`
+    : `<p class="pearl-noevidence">Teaching point from the show notes — no cited study in this episode.</p>`;
+
+  const episodes = (pearl.episodes || []).slice(0, 2).map(episode => {
+    const label = episode.episode_number ? `Ep. #${episode.episode_number}` : 'Episode';
+    return `
+      <a class="episode-link" href="${escAttr(safeUrl(episode.episode_url))}" target="_blank" rel="noopener">
+        <span class="episode-kicker">${esc(label)}</span>
+        <span>${esc(truncate(episode.episode_title || 'Curbsiders episode', 72))}</span>
+      </a>
+    `;
+  }).join('');
+  const moreEpisodes = (pearl.episode_count || 0) > 2
+    ? `<p class="episode-more">+${pearl.episode_count - 2} more episode${pearl.episode_count - 2 === 1 ? '' : 's'}</p>`
+    : '';
+
+  return `
+    <article class="pearl-card">
+      <p class="pearl-text">${esc(pearl.pearl)}</p>
+      <div class="pearl-tags">${segments}${topics}${specialties}</div>
+      ${evidenceBlock}
+      <div class="pearl-footer">
+        ${episodes}
+        ${moreEpisodes}
+      </div>
+    </article>
+  `;
+}
+
+function showEvidenceForCitation(canonicalKey) {
+  const trial = allTrials.find(item => item.canonical_key === canonicalKey);
+  if (!trial) {
+    return;
+  }
+  state.viewMode = 'browser';
+  state.searchQuery = trial.citation_label || trial.paper_title || '';
+  state.topicQuery = '';
+  state.selectedSpecialties.clear();
+  state.selectedStudyTypes.clear();
+  state.selectedEra = 'all';
+  state.pubmedMode = 'all';
+  state.sort = 'relevance';
+  state.sortManuallyChosen = true;
+  state.page = 1;
+
+  document.getElementById('search-input').value = state.searchQuery;
+  document.getElementById('topic-input').value = '';
+  document.getElementById('sort-select').value = state.sort;
+  applyFilters();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function renderActiveFilters() {

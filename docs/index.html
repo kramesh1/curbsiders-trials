@@ -86,12 +86,13 @@
     <section class="content">
       <div class="content-top">
         <div class="content-heading">
-          <p class="eyebrow">Teaching View</p>
-          <h2>Build from clinical question to bedside teaching point.</h2>
+          <p class="eyebrow">Teaching Workspace</p>
+          <h2>From quick pearls to the evidence behind them.</h2>
         </div>
         <div class="content-actions">
           <div class="view-toggle" aria-label="View mode">
-            <button class="view-toggle-btn active" type="button" data-view-mode="teaching">Knowledge chains</button>
+            <button class="view-toggle-btn active" type="button" data-view-mode="pearls">Teaching pearls</button>
+            <button class="view-toggle-btn" type="button" data-view-mode="teaching">Knowledge chains</button>
             <button class="view-toggle-btn" type="button" data-view-mode="browser">Evidence browser</button>
           </div>
           <div class="quick-actions">
@@ -101,7 +102,9 @@
         </div>
       </div>
 
-      <div id="teaching-view" class="teaching-view"></div>
+      <div id="pearls-view" class="pearls-view"></div>
+
+      <div id="teaching-view" class="teaching-view" hidden></div>
 
       <div id="browser-view" class="browser-view" hidden>
         <div id="active-filters" class="active-filters" aria-live="polite"></div>

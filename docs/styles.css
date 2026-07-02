@@ -955,3 +955,179 @@ footer {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Teaching pearls view ───────────────────────────────────────────────── */
+.pearls-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: start;
+  padding: 1.05rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(19, 34, 56, 0.07);
+}
+.pearls-summary h3 {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.18;
+}
+.pearls-summary p {
+  margin: 0.55rem 0 0;
+  max-width: 82ch;
+  line-height: 1.58;
+  color: var(--ink-soft);
+}
+.pearls-metrics {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.pearls-metrics strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+}
+
+.pearls-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+.pearl-search-wrap {
+  flex: 1 1 320px;
+}
+.pearl-linked-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.pearl-specialty-chips {
+  margin-top: 0.85rem;
+}
+.topic-chip.active {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+.topic-chip.active .chip-count {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.pearls-resultbar {
+  margin: 1rem 0 0.4rem;
+}
+.pearls-grid {
+  margin-top: 0.6rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+.pearl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 1.15rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(19, 34, 56, 0.08);
+  border-left: 4px solid var(--accent);
+  box-shadow: 0 8px 24px rgba(19, 34, 56, 0.05);
+}
+.pearl-text {
+  margin: 0;
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 1.12rem;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.pearl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.pearl-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.16rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--teal);
+  background: rgba(31, 122, 122, 0.1);
+  border: 1px solid rgba(31, 122, 122, 0.28);
+}
+.pearl-cite-detail {
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+}
+.pearl-category-chips {
+  margin-top: 0.85rem;
+}
+.pearl-evidence {
+  border-top: 1px dashed rgba(19, 34, 56, 0.14);
+  padding-top: 0.7rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.pearl-evidence-title {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.pearl-citation {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.pearl-cite-name {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  color: var(--accent-deep);
+  cursor: pointer;
+  border-bottom: 1px dotted rgba(123, 36, 24, 0.5);
+}
+.pearl-cite-name:hover {
+  color: var(--accent);
+}
+.pearl-cite-link {
+  font-size: 0.8rem;
+  color: var(--teal);
+  text-decoration: none;
+}
+.pearl-cite-link:hover {
+  text-decoration: underline;
+}
+.pearl-noevidence {
+  margin: 0;
+  padding-top: 0.6rem;
+  border-top: 1px dashed rgba(19, 34, 56, 0.14);
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.pearl-footer {
+  margin-top: auto;
+  display: grid;
+  gap: 0.5rem;
+}
+@media (max-width: 720px) {
+  .pearls-summary,
+  .pearls-metrics {
+    grid-template-columns: 1fr;
+    white-space: normal;
+  }
+}
