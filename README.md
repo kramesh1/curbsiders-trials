@@ -2,10 +2,9 @@
 
 This repository builds a searchable teaching reference of clinical trials, observational studies, systematic reviews, meta-analyses, and guidelines mentioned on The Curbsiders Internal Medicine Podcast.
 
-The static site has three working modes:
+The static site has two working modes:
 
 - **Teaching pearls** (default): verbatim clinical pearls pulled from the show-note `Pearls` sections, each linked to the trials, guidelines, and reviews cited in the same episode. This is the fastest path to a quick teaching point plus its evidence.
-- **Knowledge chains**: computed teaching pathways that start with a bedside question and surface representative source records.
 - **Evidence browser**: searchable/filterable canonical records with backlinks to the Curbsiders episodes where each paper or trial was mentioned.
 
 ## Local quick start

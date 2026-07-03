@@ -4,15 +4,12 @@ This repository is currently strong enough to browse, search, and begin human re
 
 ## Teaching Use
 
-Use the site for three teaching workflows:
+Use the site for two teaching workflows:
 
-1. **Build a knowledge chain**
-   Start from the `Knowledge chains` view, choose a pathway, then use `Review sources` to inspect the underlying evidence set.
-
-2. **Prepare a chalk talk**
+1. **Prepare a chalk talk**
    Search the `Evidence browser` by condition, drug, or trial name. Filter by `RCT`, `systematic review`, `meta-analysis`, or `guideline` to separate primary evidence from synthesis and current-practice sources.
 
-3. **Trace a Curbsiders citation**
+2. **Trace a Curbsiders citation**
    Open a record, follow the episode backlink, and compare the record summary against the original show-note context before using it in teaching.
 
 ## Review Priorities
@@ -22,7 +19,7 @@ Review in this order:
 1. **Newest episodes**
    Start with episodes `530` through `521` because these are highest-value for current teaching.
 
-2. **High-impact pathways**
+2. **High-impact topics**
    Review hypertension, diabetes/cardiorenal protection, anticoagulation, antibiotic duration, ASCVD prevention, obesity/nutrition, and screening.
 
 3. **Records labeled `other`**

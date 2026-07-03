@@ -56,81 +56,6 @@ const SEARCH_SYNONYMS = {
   t2dm: ['type 2 diabetes', 'diabetes'],
 };
 
-const TEACHING_PATHWAYS = [
-  {
-    key: 'hypertension',
-    title: 'Hypertension targets and measurement',
-    question: 'How should blood pressure be measured, confirmed, and treated to target?',
-    frame: 'Separate the diagnosis problem from the treatment-target problem, then show how trial data and guidelines changed bedside thresholds.',
-    searchQuery: 'hypertension blood pressure',
-    specialtyTags: ['cardiology', 'preventive medicine', 'nephrology', 'general internal medicine'],
-    terms: ['blood pressure', 'hypertension', 'antihypertensive', 'sprint', 'dash', 'renal denervation'],
-  },
-  {
-    key: 'diabetes-glycemic-targets',
-    title: 'Diabetes glycemic targets and medication choice',
-    question: 'When does tighter glycemic control help, and when should the goal be individualized?',
-    frame: 'Use older glycemic-target trials as the setup, then contrast them with modern cardiorenal outcome evidence.',
-    searchQuery: 'diabetes glycemic',
-    specialtyTags: ['endocrinology', 'cardiology', 'nephrology', 'general internal medicine'],
-    terms: ['diabetes', 'a1c', 'glycemic', 'glucose', 'insulin', 'sglt2', 'glp-1', 'semaglutide', 'metformin'],
-  },
-  {
-    key: 'anticoagulation-af',
-    title: 'Atrial fibrillation and anticoagulation decisions',
-    question: 'Who benefits from anticoagulation, and how should competing bleeding risks be taught?',
-    frame: 'Anchor the discussion around absolute stroke prevention, bleeding tradeoffs, fall risk, and shared decision-making.',
-    searchQuery: 'anticoagulation atrial fibrillation',
-    specialtyTags: ['cardiology', 'geriatrics', 'general internal medicine', 'hematology'],
-    terms: ['atrial fibrillation', 'afib', 'anticoagulation', 'doac', 'warfarin', 'stroke', 'bleeding', 'fall risk'],
-  },
-  {
-    key: 'infection-duration',
-    title: 'Shorter antibiotic courses and oral step-down',
-    question: 'When is less antibiotic treatment enough?',
-    frame: 'Teach the move from tradition-based duration to patient-centered, trial-supported shorter courses and oral therapy.',
-    searchQuery: 'antibiotic duration',
-    specialtyTags: ['infectious disease', 'general internal medicine', 'emergency medicine'],
-    terms: ['antibiotic', 'duration', 'oral', 'intravenous', 'iv antibiotics', 'bacteremia', 'pneumonia', 'osteomyelitis', 'diverticulitis'],
-  },
-  {
-    key: 'ckd-cardiorenal',
-    title: 'CKD and cardiorenal protection',
-    question: 'Which therapies protect kidneys and hearts beyond treating a lab number?',
-    frame: 'Connect albuminuria, heart failure, diabetes, and CKD progression into one cardiorenal prevention story.',
-    searchQuery: 'kidney SGLT2',
-    specialtyTags: ['nephrology', 'cardiology', 'endocrinology', 'general internal medicine'],
-    terms: ['ckd', 'chronic kidney', 'kidney', 'albuminuria', 'sglt2', 'finerenone', 'cardiorenal', 'heart failure'],
-  },
-  {
-    key: 'prevention-lipids',
-    title: 'ASCVD prevention and lipid risk',
-    question: 'How should clinicians move from risk markers to treatment decisions?',
-    frame: 'Show how risk estimation, LDL lowering, CAC, apoB, and medication outcomes fit together at the bedside.',
-    searchQuery: 'LDL statin',
-    specialtyTags: ['cardiology', 'preventive medicine', 'endocrinology', 'general internal medicine'],
-    terms: ['ascvd', 'ldl', 'statin', 'apob', 'cac', 'coronary artery calcium', 'aspirin', 'primary prevention', 'bempedoic'],
-  },
-  {
-    key: 'obesity-nutrition',
-    title: 'Obesity, nutrition, and metabolic risk',
-    question: 'What evidence changes counseling beyond generic lifestyle advice?',
-    frame: 'Pair nutrition trials with obesity pharmacotherapy and risk-marker caveats so counseling stays concrete.',
-    searchQuery: 'obesity weight loss',
-    specialtyTags: ['endocrinology', 'preventive medicine', 'cardiology', 'general internal medicine'],
-    terms: ['obesity', 'nutrition', 'diet', 'weight loss', 'semaglutide', 'ketogenic', 'dash', 'carbohydrate'],
-  },
-  {
-    key: 'screening-prevention',
-    title: 'Cancer screening and preventive care thresholds',
-    question: 'When does screening help enough to justify downstream testing and harm?',
-    frame: 'Teach screening as a balance of baseline risk, benefit lag time, false positives, and patient values.',
-    searchQuery: 'screening',
-    specialtyTags: ['preventive medicine', 'oncology', 'general internal medicine', 'geriatrics'],
-    terms: ['screening', 'cancer', 'breast', 'colon', 'colorectal', 'cervical', 'prostate', 'false positive'],
-  },
-];
-
 const state = {
   searchQuery: '',
   topicQuery: '',
@@ -154,7 +79,6 @@ let filteredPearls = [];
 let pearlSpecialtyCounts = [];
 let pearlCategoryCounts = [];
 let filteredTrials = [];
-let teachingPathways = [];
 let fuse = null;
 let searchDocuments = new Map();
 let relevanceById = new Map();
@@ -174,9 +98,9 @@ async function init() {
     const message =
       `<div class="empty-state"><strong>Could not load data</strong><p>${esc(err.message)}</p></div>`;
     // The browser view (and #cards-grid) starts hidden, so surface the error in
-    // the always-visible hero and teaching areas too.
+    // the always-visible hero and pearls areas too.
     document.getElementById('hero-stats').textContent = 'Could not load dataset.';
-    document.getElementById('teaching-view').innerHTML = message;
+    document.getElementById('pearls-view').innerHTML = message;
     document.getElementById('cards-grid').innerHTML = message;
     return;
   }
@@ -186,11 +110,9 @@ async function init() {
   computeFacets();
   computePearlFacets();
   buildSearchIndex();
-  computeTeachingPathways();
   hydrateStateFromUrl();
   renderHeroStats();
   renderFilterControls();
-  renderTeachingView();
   renderPearlsView();
   wireControls();
   applyFilters();
@@ -242,118 +164,6 @@ function computeFacets() {
     allTrials.flatMap(trial => trial.context_topics || []),
     label => label
   ).slice(0, TOP_TOPIC_COUNT);
-}
-
-function computeTeachingPathways() {
-  teachingPathways = TEACHING_PATHWAYS.map(pathway => {
-    const records = allTrials
-      .filter(trial => trialMatchesPathway(trial, pathway))
-      .sort((a, b) =>
-        teachingStrengthScore(b) - teachingStrengthScore(a)
-        || (b.year || 0) - (a.year || 0)
-        || compareTitle(a, b)
-      );
-
-    const episodeUrls = new Set(
-      records.flatMap(trial => (trial.episodes || []).map(episode => episode.episode_url).filter(Boolean))
-    );
-    const studyTypes = new Set(records.map(trial => trial.study_type || 'other'));
-    const rcts = records.filter(trial => normalizeText(trial.study_type) === 'rct').length;
-    const synthesis = records.filter(isSynthesisRecord).length;
-    const guidelines = records.filter(trial => normalizeText(trial.study_type) === 'guideline').length;
-
-    return {
-      ...pathway,
-      records,
-      episodeCount: episodeUrls.size,
-      studyTypes,
-      rcts,
-      synthesis,
-      guidelines,
-      milestones: selectTeachingMilestones(records),
-    };
-  })
-    .filter(pathway => pathway.records.length >= 8)
-    .sort((a, b) => b.records.length - a.records.length);
-}
-
-function trialMatchesPathway(trial, pathway) {
-  const haystack = normalizeText([
-    trial.citation_label,
-    trial.paper_title,
-    trial.brief_summary,
-    trial.context_topic,
-    ...(trial.context_topics || []),
-    ...(trial.episode_titles || []),
-  ].filter(Boolean).join(' '));
-
-  const termHits = pathway.terms.filter(term => haystack.includes(normalizeText(term))).length;
-  if (!termHits) {
-    return false;
-  }
-
-  const specialtyHit = (trial.specialty_tags || []).some(tag => pathway.specialtyTags.includes(tag));
-  return specialtyHit || termHits >= 2;
-}
-
-function teachingStrengthScore(trial) {
-  const type = normalizeText(trial.study_type);
-  const typeScore = {
-    guideline: 8,
-    'meta-analysis': 7,
-    'systematic review': 7,
-    rct: 6,
-    observational: 4,
-    'case series': 2,
-    other: 1,
-  }[type] || 1;
-  return typeScore * 100
-    + (trial.episode_count || 0) * 12
-    + (trial.mention_count || 0) * 4
-    + Math.min(Math.max((trial.year || 0) - 1990, 0), 40);
-}
-
-function isSynthesisRecord(trial) {
-  const type = normalizeText(trial.study_type);
-  return type === 'meta-analysis' || type === 'systematic review' || type === 'guideline';
-}
-
-function selectTeachingMilestones(records) {
-  const buckets = [
-    {
-      role: 'Clinical setup',
-      match: trial => ['observational', 'case series', 'other'].includes(normalizeText(trial.study_type)),
-      sort: (a, b) => (a.year || 9999) - (b.year || 9999) || teachingStrengthScore(b) - teachingStrengthScore(a),
-    },
-    {
-      role: 'Trial evidence',
-      match: trial => normalizeText(trial.study_type) === 'rct',
-      sort: (a, b) => teachingStrengthScore(b) - teachingStrengthScore(a),
-    },
-    {
-      role: 'Synthesis',
-      match: isSynthesisRecord,
-      sort: (a, b) => teachingStrengthScore(b) - teachingStrengthScore(a),
-    },
-    {
-      role: 'Current practice',
-      match: trial => true,
-      sort: (a, b) => (b.year || 0) - (a.year || 0) || teachingStrengthScore(b) - teachingStrengthScore(a),
-    },
-  ];
-
-  const selected = [];
-  const usedIds = new Set();
-  for (const bucket of buckets) {
-    const record = records
-      .filter(trial => !usedIds.has(trial.id) && bucket.match(trial))
-      .sort(bucket.sort)[0];
-    if (record) {
-      usedIds.add(record.id);
-      selected.push({ role: bucket.role, record });
-    }
-  }
-  return selected;
 }
 
 function countAndSort(values, normalize) {
@@ -435,7 +245,7 @@ function hydrateStateFromUrl() {
   state.sort = params.get('sort') || (activeSearchQuery() ? 'relevance' : 'episode-desc');
   state.sortManuallyChosen = params.has('sort');
   const viewParam = params.get('view');
-  state.viewMode = ['browser', 'teaching', 'pearls'].includes(viewParam) ? viewParam : 'pearls';
+  state.viewMode = ['browser', 'pearls'].includes(viewParam) ? viewParam : 'pearls';
   state.page = clampPage(Number.parseInt(params.get('page') || '1', 10));
 
   const specialties = params.get('specialties');
@@ -666,7 +476,7 @@ function wireControls() {
     const viewButton = event.target.closest('[data-view-mode]');
     if (viewButton) {
       const requested = viewButton.dataset.viewMode;
-      state.viewMode = ['browser', 'teaching', 'pearls'].includes(requested) ? requested : 'pearls';
+      state.viewMode = ['browser', 'pearls'].includes(requested) ? requested : 'pearls';
       renderViewMode();
       syncUrl();
       return;
@@ -699,12 +509,6 @@ function wireControls() {
       return;
     }
 
-    const pathwayExploreButton = event.target.closest('[data-pathway-explore]');
-    if (pathwayExploreButton) {
-      explorePathway(pathwayExploreButton.dataset.pathwayExplore);
-      return;
-    }
-
     const filterButton = event.target.closest('[data-filter-group]');
     if (filterButton) {
       handleFilterButton(filterButton.dataset.filterGroup, filterButton.dataset.filterKey);
@@ -725,30 +529,6 @@ function wireControls() {
       removeActiveFilter(removeFilterButton.dataset.removeFilter, removeFilterButton.dataset.value);
     }
   });
-}
-
-function explorePathway(pathwayKey) {
-  const pathway = teachingPathways.find(item => item.key === pathwayKey);
-  if (!pathway) {
-    return;
-  }
-  state.viewMode = 'browser';
-  state.searchQuery = pathway.searchQuery;
-  state.topicQuery = '';
-  state.selectedSpecialties = new Set(pathway.specialtyTags.filter(tag =>
-    specialtyCounts.some(item => item.key === tag)
-  ).slice(0, 2));
-  state.selectedStudyTypes.clear();
-  state.selectedEra = 'all';
-  state.pubmedMode = 'all';
-  state.sort = 'episodes-desc';
-  state.sortManuallyChosen = true;
-  state.page = 1;
-
-  document.getElementById('search-input').value = state.searchQuery;
-  document.getElementById('topic-input').value = '';
-  document.getElementById('sort-select').value = state.sort;
-  applyFilters();
 }
 
 function handleFilterButton(group, key) {
@@ -1101,119 +881,16 @@ function startsNearFieldBeginning(value, term) {
 
 function renderViewMode() {
   const pearlsView = document.getElementById('pearls-view');
-  const teachingView = document.getElementById('teaching-view');
   const browserView = document.getElementById('browser-view');
   const modeButtons = document.querySelectorAll('[data-view-mode]');
 
   pearlsView.hidden = state.viewMode !== 'pearls';
-  teachingView.hidden = state.viewMode !== 'teaching';
   browserView.hidden = state.viewMode !== 'browser';
   modeButtons.forEach(button => {
     const active = button.dataset.viewMode === state.viewMode;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
-}
-
-function renderTeachingView() {
-  const container = document.getElementById('teaching-view');
-  const totalRecords = teachingPathways.reduce((sum, pathway) => sum + pathway.records.length, 0);
-  const totalEpisodes = new Set(
-    teachingPathways.flatMap(pathway =>
-      pathway.records.flatMap(trial => (trial.episodes || []).map(episode => episode.episode_url).filter(Boolean))
-    )
-  ).size;
-
-  container.innerHTML = `
-    <section class="teaching-summary" aria-label="Teaching pathway summary">
-      <div>
-        <p class="section-kicker">Curated layer</p>
-        <h3>Start with the question, then walk learners through the evidence chain.</h3>
-        <p>
-          These pathways are computed from the canonical records using topic language, specialty tags,
-          study type, publication year, episode recurrence, and source links.
-        </p>
-      </div>
-      <div class="teaching-metrics">
-        <span><strong>${teachingPathways.length.toLocaleString()}</strong> pathways</span>
-        <span><strong>${totalRecords.toLocaleString()}</strong> matched records</span>
-        <span><strong>${totalEpisodes.toLocaleString()}</strong> source episodes</span>
-      </div>
-    </section>
-
-    <section class="pathway-grid" aria-label="Knowledge chains">
-      ${teachingPathways.map(pathwayHTML).join('')}
-    </section>
-  `;
-  renderViewMode();
-}
-
-function pathwayHTML(pathway) {
-  const milestoneHTML = pathway.milestones.length
-    ? pathway.milestones.map(milestoneHTMLFor).join('')
-    : '<div class="empty-chain">Not enough structured records yet.</div>';
-
-  return `
-    <article class="pathway-card">
-      <div class="pathway-header">
-        <div>
-          <p class="section-kicker">${esc(pathwayLabel(pathway))}</p>
-          <h3>${esc(pathway.title)}</h3>
-        </div>
-        <button class="pathway-action" type="button" data-pathway-explore="${escAttr(pathway.key)}">
-          Review sources
-        </button>
-      </div>
-
-      <p class="clinical-question">${esc(pathway.question)}</p>
-      <p class="pathway-frame">${esc(pathway.frame)}</p>
-
-      <div class="pathway-stats">
-        <span>${pathway.records.length.toLocaleString()} records</span>
-        <span>${pathway.episodeCount.toLocaleString()} episodes</span>
-        <span>${pathway.rcts.toLocaleString()} RCTs</span>
-        <span>${(pathway.synthesis + pathway.guidelines).toLocaleString()} syntheses/guidelines</span>
-      </div>
-
-      <div class="chain-track">
-        ${milestoneHTML}
-      </div>
-
-      <div class="chalk-talk">
-        <p class="chalk-title">3-minute teaching arc</p>
-        <ol>
-          <li>Open with the bedside decision: ${esc(pathway.question)}</li>
-          <li>Walk from setup to trial evidence to synthesis, naming where the evidence is strongest.</li>
-          <li>Close with what changes for the next patient and what caveat should temper overuse.</li>
-        </ol>
-      </div>
-    </article>
-  `;
-}
-
-function milestoneHTMLFor(milestone) {
-  const trial = milestone.record;
-  const title = trial.citation_label || trial.paper_title || 'Untitled citation';
-  const year = trial.year || 'Year unknown';
-  const sourceLine = trial.episode_count
-    ? `${trial.episode_count} episode${trial.episode_count === 1 ? '' : 's'}`
-    : 'Episode link pending';
-  return `
-    <div class="chain-step">
-      <span class="chain-role">${esc(milestone.role)}</span>
-      <strong>${esc(truncate(title, 82))}</strong>
-      <span class="chain-meta">${esc(year)} · ${esc(studyTypeLabel(trial.study_type))} · ${esc(sourceLine)}</span>
-      <p>${esc(truncate(trial.brief_summary || 'Summary pending curator review.', 180))}</p>
-    </div>
-  `;
-}
-
-function pathwayLabel(pathway) {
-  const tags = pathway.specialtyTags
-    .filter(tag => specialtyCounts.some(item => item.key === tag))
-    .slice(0, 2)
-    .map(cap);
-  return tags.length ? tags.join(' + ') : 'Teaching pathway';
 }
 
 function renderPearlsView() {
