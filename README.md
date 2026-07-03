@@ -24,7 +24,7 @@ The site is static, but it must be served over HTTP so the browser can fetch `do
 
 ## Current status
 
-As of July 1, 2026, the extraction pipeline has been run across the full scraped episode set, the teaching-pearls layer was added, and the site dataset was rebuilt.
+As of July 3, 2026, the extraction pipeline has been run across the full scraped episode set, the teaching-pearls layer was added, a full-episode transcript corpus was harvested, and the site dataset was rebuilt.
 
 - `555` episodes marked completed in [data/extraction_state.json](data/extraction_state.json)
 - `0` failed episodes
@@ -33,13 +33,22 @@ As of July 1, 2026, the extraction pipeline has been run across the full scraped
 - `533` episodes with at least one extracted literature mention
 - `5903` canonical records with an outbound literature link
 - `1271` canonical teaching pearls in [docs/data/pearls.json](docs/data/pearls.json), of which `892` link to at least one supporting citation
+- `448` full-episode transcripts in [data/transcripts.json](data/transcripts.json): `94` official (human/CME-reviewed) and `354` YouTube auto-captions filling the gaps (`ai_generated`)
 
 The missing `22` episodes are currently zero-trial episodes, not ingestion failures.
+
+The transcript corpus and the owner-gated candidate-pearl pass are a context/search layer, deliberately kept out of the auto-published verbatim pearl path (see below). `data/candidate_pearls.json` currently holds a small seeded batch (`13` quote-verified candidates from one episode) as a worked example; nothing has been promoted into `data/approved_pearls.json` yet.
 
 ## Data artifacts
 
 - [data/episodes.json](data/episodes.json)
-  Scraped Curbsiders metadata and show notes.
+  Scraped Curbsiders metadata and show notes. Each row also carries `transcript_url` when the show notes link an official transcript.
+
+- [data/transcripts.json](data/transcripts.json)
+  Full-episode text, one record per episode (`448` total), tagged by `source`. `source: "official"` (`94` episodes, mostly #247–424) is text from the transcript PDFs the show publishes — highest-fidelity, human/CME-reviewed, no ASR. `source: "youtube"` (`354` episodes) fills the gaps from the channel's auto-captions (`ai_generated: true`), which are speech recognition and carry the usual ASR error risk. Both are intended as a search/context corpus and input to the owner-gated candidate-pearl pass — **not** as a source for auto-published verbatim pearls (the deterministic pearl layer stays anchored to the show notes).
+
+- [data/candidate_pearls.json](data/candidate_pearls.json) / [data/approved_pearls.json](data/approved_pearls.json)
+  Model-drafted teaching pearls from transcripts (candidate_pearls), each with a `supporting_quote` verified verbatim against the transcript and a `review_status`. A human sets `review_status: "approved"` and runs the `promote` step to copy those into approved_pearls; nothing here is ever written into `data/pearls.json`. See the owner-gated pass below.
 
 - [data/extraction_state.json](data/extraction_state.json)
   Per-episode processing manifest with completion state, chunk counts, and errors.
@@ -65,23 +74,54 @@ The missing `22` episodes are currently zero-trial episodes, not ingestion failu
 
    Scrapes Curbsiders episode pages into [data/episodes.json](data/episodes.json). The scraper refreshes incomplete cached rows and captures episode dates when the source page exposes them.
 
-2. `python scripts/extract_trials.py --backend openai --workers 8`
+2. `python scripts/fetch_transcripts.py`
+
+   Downloads the official transcript file linked by each episode's show notes, extracts its text, and writes [data/transcripts.json](data/transcripts.json). Resumable (skips already-fetched) and spends no model tokens. `--report` prints coverage; `--refresh` re-fetches everything.
+
+   Optional gap-fill: `python scripts/harvest_youtube_captions.py` matches episodes without an official transcript to the show's YouTube videos (by episode number in the title) and stores the auto-captions as `source: "youtube"`. Needs `yt-dlp`; spends no model tokens; tagged `ai_generated` since captions are ASR.
+
+3. `python scripts/extract_trials.py --backend openai --workers 8`
 
    Synchronous extractor for spot checks, small reruns, and prompt iteration. It writes episode-level mentions to [data/trials.json](data/trials.json) and per-episode state to [data/extraction_state.json](data/extraction_state.json).
 
-3. `python scripts/extract_trials_batch.py ...`
+4. `python scripts/extract_trials_batch.py ...`
 
    Preferred workflow for larger reruns and backfills. It builds a saved local batch directory under `data/batches/`, submits one request per show-note chunk, then downloads and merges results into the local dataset.
 
-4. `python scripts/extract_pearls.py`
+5. `python scripts/extract_pearls.py`
 
    Deterministically extracts the show-note `Pearls` sections into [data/pearls.json](data/pearls.json) and links each pearl to the episode's already-extracted trial mentions. No model calls, so it is cheap and safe to re-run any time.
 
-5. `python scripts/build_site.py`
+6. `python scripts/build_site.py`
 
    Canonicalizes duplicate trial mentions across episodes and rewrites [docs/data/trials.json](docs/data/trials.json), and canonicalizes pearls into [docs/data/pearls.json](docs/data/pearls.json), for the browser UI.
 
 The site is a static app rooted at [docs/index.html](docs/index.html).
+
+## Candidate pearls from transcripts (owner-gated)
+
+`scripts/generate_candidate_pearls.py` drafts additional teaching pearls from the full
+episode transcripts — the points a whole episode makes that the show-note `Pearls`
+summary doesn't. Because this needs a model and model paraphrase is the hallucination
+risk the project is built to avoid, it is deliberately fenced:
+
+- It **never** writes to `data/pearls.json`. Candidates go to `data/candidate_pearls.json`.
+- Every candidate must carry a **verbatim `supporting_quote`**, which is then verified
+  to actually appear in the transcript. Unsupported candidates are dropped — the model
+  can't smuggle in a claim, because its evidence is checkable.
+- Nothing is published until a human sets `review_status: "approved"` and runs `promote`.
+- It is **not** part of `ingest.py` — it spends tokens and is run deliberately.
+
+```bash
+python scripts/generate_candidate_pearls.py generate --episode 347   # one episode
+python scripts/generate_candidate_pearls.py generate --limit 5       # first 5 eligible
+python scripts/generate_candidate_pearls.py report                   # counts + review status
+# (review data/candidate_pearls.json, set review_status: "approved" on the good ones)
+python scripts/generate_candidate_pearls.py promote                  # -> data/approved_pearls.json
+```
+
+Defaults to `claude-opus-4-8` (override with `--model`) and to the high-fidelity
+official transcripts only (`--source`/`--include-ai` to widen). Requires `ANTHROPIC_API_KEY`.
 
 ## Incremental ingest (recommended for new episodes)
 

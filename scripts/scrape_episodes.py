@@ -36,6 +36,28 @@ MAX_RETRIES = 3
 EPISODE_URL_RE = re.compile(r"^https://thecurbsiders\.com/curbsiders-podcast/[^?#]+$")
 EXCLUDE_SUFFIXES = ("/embed", "/feed")
 
+# Many episodes (~94/555, concentrated in the CME era ~#247-424) link an official
+# transcript PDF/DOCX hosted on the Curbsiders' own WordPress uploads. These are the
+# highest-fidelity full-episode text available, so we capture the link here for the
+# transcript harvester (scripts/fetch_transcripts.py). A link qualifies when it is
+# on thecurbsiders.com, points at a .pdf/.docx, and says "transcript" in either the
+# link text or the filename. (Note: URLs appear with both http:// and https://.)
+TRANSCRIPT_LINK_RE = re.compile(
+    r"\[([^\]]*)\]\((https?://(?:www\.)?thecurbsiders\.com/[^)]+\.(?:pdf|docx?))\)",
+    re.IGNORECASE,
+)
+
+
+def extract_transcript_url(show_notes: str) -> str | None:
+    """Return the URL of the episode's official transcript file, or None.
+
+    Picks the first qualifying link; episodes carry at most one distinct transcript.
+    """
+    for text, url in TRANSCRIPT_LINK_RE.findall(show_notes or ""):
+        if "transcript" in text.lower() or "transcript" in url.lower():
+            return url
+    return None
+
 
 def make_session() -> cr.Session:
     return cr.Session(impersonate=IMPERSONATE, timeout=30)
@@ -215,6 +237,7 @@ def main():
                 "episode_number": ep_num,
                 "show_notes": show_notes,
                 "show_notes_length": len(show_notes),
+                "transcript_url": extract_transcript_url(show_notes),
             }
             new_count += 1
 

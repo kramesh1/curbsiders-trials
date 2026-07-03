@@ -16,6 +16,26 @@ Open follow-ups for this layer: tune the pearl→trial link threshold in
 `pearl_utils.DEFAULT_MIN_LINK_SCORE`, and consider a reviewer pass over pearls
 whose linked evidence looks off-topic.
 
+## Transcript corpus + candidate pearls (added July 2026)
+
+A full-episode transcript layer now backs the project as a context/search corpus,
+kept strictly separate from the auto-published verbatim pearl path:
+
+- `scripts/fetch_transcripts.py` harvests the `94` official (human/CME-reviewed)
+  transcript files the show links from its notes; `scripts/harvest_youtube_captions.py`
+  fills the remaining gaps with the channel's YouTube auto-captions (`354` episodes,
+  tagged `ai_generated`). Both write `data/transcripts.json` and spend no model tokens.
+  `scripts/ingest.py` now runs the official-transcript harvest as an incremental phase.
+- `scripts/generate_candidate_pearls.py` is an **owner-gated** pass that drafts extra
+  teaching pearls from transcripts. Every candidate carries a verbatim `supporting_quote`
+  that is deterministically checked against the transcript; unsupported ones are dropped.
+  Nothing reaches `data/pearls.json` — candidates land in `data/candidate_pearls.json`,
+  and a human must approve + `promote` them into `data/approved_pearls.json`.
+
+Open follow-ups: review the seeded candidate batch in `data/candidate_pearls.json`,
+decide whether/how approved transcript pearls surface in the site, and consider
+widening candidate generation beyond official transcripts once fidelity is trusted.
+
 ## Current baseline
 
 - Full scrape completed in [data/episodes.json](data/episodes.json)

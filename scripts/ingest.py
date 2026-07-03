@@ -6,12 +6,13 @@ the last run, then rebuilds the deterministic layers (pearls + site) and
 validates. Designed to be safe to run on a schedule (e.g. weekly).
 
 Phases:
-  1. scrape    refresh data/episodes.json (skips already-scraped episodes)
-  2. extract   run the trial extractor on pending episodes only
-  3. enrich    deterministically add segments + trial detail + category
-  4. pearls    re-derive data/pearls.json (deterministic, cheap)
-  5. site      rebuild docs/data/*.json
-  6. validate  run repository validation
+  1. scrape      refresh data/episodes.json (skips already-scraped episodes)
+  2. transcripts harvest official transcript files for episodes that link one
+  3. extract     run the trial extractor on pending episodes only
+  4. enrich      deterministically add segments + trial detail + category
+  5. pearls      re-derive data/pearls.json (deterministic, cheap)
+  6. site        rebuild docs/data/*.json
+  7. validate    run repository validation
 
 Usage:
   python scripts/ingest.py                      # full incremental run (openai)
@@ -128,6 +129,7 @@ def main() -> int:
     parser.add_argument("--model", default=None, help="Model name (defaults per backend)")
     parser.add_argument("--workers", type=int, default=8, help="Parallel workers for sync backends")
     parser.add_argument("--skip-scrape", action="store_true", help="Do not re-scrape; use the current episodes.json")
+    parser.add_argument("--skip-transcripts", action="store_true", help="Do not harvest official transcript files")
     parser.add_argument(
         "--enrich-only",
         action="store_true",
@@ -148,6 +150,12 @@ def main() -> int:
     # Phase 1: scrape (unless skipped). The scraper is itself incremental.
     if not args.skip_scrape and not args.dry_run:
         python_step("scrape", "scrape_episodes.py")
+
+    # Phase 2: harvest official transcripts for any episode that links one. Also
+    # incremental (skips already-fetched) and spends no tokens. Skipped alongside
+    # scrape for offline/enrich-only runs since it, too, is network-bound.
+    if not args.skip_scrape and not args.skip_transcripts and not args.dry_run:
+        python_step("transcripts", "fetch_transcripts.py")
 
     episodes = load_json(EPISODES_FILE, [])
     state = load_json(STATE_FILE, {})

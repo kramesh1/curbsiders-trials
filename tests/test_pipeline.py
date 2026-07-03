@@ -23,7 +23,14 @@ from scripts.pearl_utils import (
     parse_pearls_from_show_notes,
     trial_canonical_key,
 )
-from scripts.scrape_episodes import parse_episode
+from scripts.scrape_episodes import extract_transcript_url, parse_episode
+from scripts.fetch_transcripts import (
+    clean_text as clean_transcript_text,
+    extract_text,
+    looks_ai_generated,
+)
+from scripts.harvest_youtube_captions import episode_number_from_title, parse_vtt
+from scripts.generate_candidate_pearls import quote_is_verbatim
 from scripts.trial_utils import (
     build_canonical_trial_records,
     clean_text,
@@ -258,6 +265,97 @@ class ScrapeEpisodeTests(unittest.TestCase):
         self.assertEqual(title, "#530 Example Episode")
         self.assertEqual(date, "2025-06-01")
         self.assertIn("Notes here", notes)
+
+
+class TranscriptLinkTests(unittest.TestCase):
+    def test_matches_transcript_in_link_text(self):
+        # Filename says nothing about a transcript; the link text does.
+        notes = "[Download the Transcript](https://thecurbsiders.com/wp-content/uploads/2023/06/Cur-Antithrombotics-AC-V2.pdf)"
+        self.assertEqual(
+            extract_transcript_url(notes),
+            "https://thecurbsiders.com/wp-content/uploads/2023/06/Cur-Antithrombotics-AC-V2.pdf",
+        )
+
+    def test_matches_transcript_in_filename_over_http(self):
+        # Older links are http:// and only the filename flags the transcript.
+        notes = "[Download](http://thecurbsiders.com/wp-content/uploads/2022/12/Transcript-Cur-374-ADHD.docx.pdf)"
+        self.assertEqual(
+            extract_transcript_url(notes),
+            "http://thecurbsiders.com/wp-content/uploads/2022/12/Transcript-Cur-374-ADHD.docx.pdf",
+        )
+
+    def test_ignores_offsite_and_nontranscript_links(self):
+        notes = (
+            "[The Tim Ferriss Show](https://tim.blog/2019/06/05/the-tim-ferriss-show-transcripts-julie-rice-371/) "
+            "[Slides](https://thecurbsiders.com/wp-content/uploads/2023/01/slides.pdf) "
+            "[PubMed](https://pubmed.ncbi.nlm.nih.gov/12345678/)"
+        )
+        self.assertIsNone(extract_transcript_url(notes))
+
+    def test_no_transcript_returns_none(self):
+        self.assertIsNone(extract_transcript_url("no links here"))
+        self.assertIsNone(extract_transcript_url(""))
+
+
+class YouTubeCaptionTests(unittest.TestCase):
+    def test_episode_number_from_title(self):
+        self.assertEqual(episode_number_from_title("#408 COPD in Adults"), 408)
+        self.assertEqual(episode_number_from_title("#530 Nutrition with Dr. X"), 530)
+        self.assertIsNone(episode_number_from_title("Hotcakes Recap"))
+
+    def test_parse_vtt_decodes_and_dedupes(self):
+        vtt = (
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n"
+            "&gt;&gt; hello there<00:00:02.000><c> friends</c>\n"
+            "00:00:03.000 --> 00:00:05.000\n"
+            "hello there friends\n"          # exact rolling duplicate -> dropped
+        )
+        out = parse_vtt(vtt)
+        self.assertIn("hello there friends", out)
+        self.assertNotIn("&gt;", out)              # HTML entity decoded
+        self.assertNotIn("-->", out)               # timestamps stripped
+        self.assertEqual(out.count("hello there friends"), 1)  # deduped
+
+
+class QuoteVerificationTests(unittest.TestCase):
+    def test_verbatim_quote_matching(self):
+        transcript = "The USPSTF recommends\na conversation for adults 40 to 59 years old."
+        # Whitespace/case tolerant substring match.
+        self.assertTrue(quote_is_verbatim("recommends a CONVERSATION for adults", transcript))
+        # Not present -> rejected (the anti-hallucination gate).
+        self.assertFalse(quote_is_verbatim("start aspirin in everyone over 80", transcript))
+        # Too short to be a meaningful citation.
+        self.assertFalse(quote_is_verbatim("aspirin", transcript))
+        self.assertFalse(quote_is_verbatim("", transcript))
+
+
+class TranscriptExtractionTests(unittest.TestCase):
+    def test_clean_text_collapses_whitespace(self):
+        raw = "Line one   \n\n\n\nLine two\r\nLine three  \n"
+        self.assertEqual(clean_transcript_text(raw), "Line one\n\nLine two\nLine three")
+
+    def test_flags_ai_generated_transcript(self):
+        self.assertTrue(looks_ai_generated("#424 Hotcakes\n\nThis is a free AI-generated transcript..."))
+        self.assertTrue(looks_ai_generated("Automated transcript follows.\n"))
+        self.assertFalse(looks_ai_generated("Paul: Welcome back to The Curbsiders. Elena: Hello."))
+        # Disclaimer far past the header window should not count.
+        self.assertFalse(looks_ai_generated("real transcript " * 100 + "ai-generated"))
+
+    def test_docx_named_url_that_is_really_pdf_uses_pdf_parser(self):
+        # A .docx.pdf URL whose bytes start with the PDF magic must parse as PDF.
+        minimal_pdf = (
+            b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+            b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+            b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n"
+            b"trailer<</Root 1 0 R>>"
+        )
+        # Should route to the PDF parser (magic-byte sniff) without raising.
+        text = extract_text(
+            "https://thecurbsiders.com/wp-content/uploads/x/Transcript-1-Topic.docx.pdf",
+            minimal_pdf,
+        )
+        self.assertIsInstance(text, str)
 
 
 class ParallelPipelineTests(unittest.TestCase):
