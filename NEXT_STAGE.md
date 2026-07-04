@@ -16,6 +16,35 @@ Open follow-ups for this layer: tune the pearl→trial link threshold in
 `pearl_utils.DEFAULT_MIN_LINK_SCORE`, and consider a reviewer pass over pearls
 whose linked evidence looks off-topic.
 
+## Model-assisted evidence linking + adjudication (added July 2026)
+
+On top of the deterministic term-overlap linker, `scripts/link_pearls_evidence.py`
+asks a model which of an episode's own extracted trials support each pearl (grounded,
+verifiable, owner-gated — see the README). `845` pearls now carry model `evidence_links`.
+
+- **Adjudication is per individual link.** `link_pearls_evidence.py adjudicate` sets a
+  per-link `review_status` (`approved`/`rejected`/`reset`) from CLI selectors or a
+  `--from-file` feedback list; `apply` drops rejected links while keeping their siblings.
+  This is the "capture user feedback and re-apply" loop.
+
+Open follow-ups: carry `evidence_links` through `build_canonical_pearls`/`build_site.py`
+so the site's Teaching-pearls view can surface the model links (today the layer is a
+standalone sidecar, not wired into the site); and work a first review queue over the
+`129` low-confidence / background links.
+
+## Local ingest automation (added July 2026)
+
+The [`automation/`](automation/) directory schedules the incremental ingest:
+`run_ingest.sh` (locked, logged wrapper), a launchd template, and install docs. A run
+with no new episode spends ~0 tokens. Linking stays manual/owner-gated.
+
+## Episode-level pearl coverage (added July 2026 — was a "next candidate" below)
+
+`scripts/pearl_coverage.py` reveals the `301` episodes with no extracted pearls,
+annotated with transcript availability (`236` are transcript-backed and feedable to the
+candidate-pearl generator), and writes `data/pearls_coverage_gap.json`. The count also
+shows in `ingest.py --report`. This closes implementation candidate #3 below.
+
 ## Transcript corpus + candidate pearls (added July 2026)
 
 A full-episode transcript layer now backs the project as a context/search corpus,
@@ -102,7 +131,7 @@ If QA finds the extraction acceptable, the next technical work should probably b
 
 1. PubMed enrichment pass keyed by URL/title/label.
 2. Reviewer report for suspicious merges, missing identifiers, and `other` study types.
-3. Episode-level QA dashboard or CSV export for manual review.
+3. ~~Episode-level QA dashboard or CSV export for manual review.~~ Done: `scripts/pearl_coverage.py` (episodes-without-pearls report).
 4. Improved site filters for specialty, study type, and identifier presence.
 
 ## Commands you may still need

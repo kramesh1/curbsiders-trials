@@ -32,8 +32,10 @@ from scripts.fetch_transcripts import (
 from scripts.harvest_youtube_captions import episode_number_from_title, parse_vtt
 from scripts.generate_candidate_pearls import quote_is_verbatim
 from scripts.link_pearls_evidence import (
+    apply_decision,
     build_link_prompt,
     episode_trial_pool,
+    link_status,
     verify_links,
 )
 from scripts.trial_utils import (
@@ -923,6 +925,93 @@ class PearlEvidenceLinkerTests(unittest.TestCase):
         self.assertIn("[1] Second pearl.", prompt)
         self.assertIn("[0] SPRINT 2015", prompt)
         self.assertIn("[1] Appel 1997", prompt)
+
+    # --- adjudication ---
+
+    def _link_record(self):
+        return {
+            "episode_number": 500,
+            "episode_url": "https://example.org/500",
+            "pearl_key": "intensive bp control cuts cv events",
+            "pearl": "Intensive BP control cuts CV events.",
+            "links": [
+                {"canonical_key": "pubmed|k1", "citation_label": "SPRINT 2015",
+                 "paper_title": "Intensive vs standard", "support": "direct", "confidence": "high"},
+                {"canonical_key": "pubmed|k2", "citation_label": "Appel 1997",
+                 "paper_title": "Dietary patterns", "support": "background", "confidence": "low"},
+            ],
+            "review_status": "approved",
+        }
+
+    def test_link_status_per_link_overrides_record(self):
+        rec = self._link_record()
+        # no per-link status -> inherits the record's "approved"
+        self.assertEqual(link_status(rec["links"][0], rec), "approved")
+        # per-link status wins
+        rec["links"][0]["review_status"] = "rejected"
+        self.assertEqual(link_status(rec["links"][0], rec), "rejected")
+        # missing everywhere -> pending
+        self.assertEqual(link_status({}, {}), "pending")
+
+    def test_adjudicate_reject_by_trial_substring_touches_only_match(self):
+        links = [self._link_record()]
+        touched = apply_decision(
+            links, decision="rejected", note="off-topic", reviewed_at="2026-07-04T00:00:00+00:00",
+            record_sel={"episode": 500}, link_sel={"trial": "appel"},
+        )
+        self.assertEqual(touched, 1)
+        self.assertEqual(links[0]["links"][0].get("review_status"), None)  # SPRINT untouched
+        self.assertEqual(links[0]["links"][1]["review_status"], "rejected")
+        self.assertEqual(links[0]["links"][1]["review_note"], "off-topic")
+
+    def test_adjudicate_dry_run_does_not_mutate(self):
+        links = [self._link_record()]
+        touched = apply_decision(
+            links, decision="rejected", note=None, reviewed_at="2026-07-04T00:00:00+00:00",
+            record_sel={}, link_sel={"canonical_key": "pubmed|k1"}, dry_run=True,
+        )
+        self.assertEqual(touched, 1)
+        self.assertNotIn("review_status", links[0]["links"][0])
+
+    def test_adjudicate_reset_clears_per_link_status(self):
+        rec = self._link_record()
+        rec["links"][0]["review_status"] = "rejected"
+        rec["links"][0]["reviewed_at"] = "x"
+        links = [rec]
+        apply_decision(links, decision="reset", note=None, reviewed_at="2026-07-04T00:00:00+00:00",
+                       record_sel={}, link_sel={"canonical_key": "pubmed|k1"})
+        self.assertNotIn("review_status", links[0]["links"][0])
+        self.assertNotIn("reviewed_at", links[0]["links"][0])
+        self.assertEqual(link_status(links[0]["links"][0], rec), "approved")  # back to inherited
+
+
+class PearlCoverageTests(unittest.TestCase):
+    def test_gap_excludes_episodes_with_pearls_and_annotates_transcript(self):
+        from scripts.pearl_coverage import compute_pearl_gap
+        episodes = [
+            {"url": "https://ex.org/3", "title": "#3", "episode_number": 3},
+            {"url": "https://ex.org/2", "title": "#2", "episode_number": 2},
+            {"url": "https://ex.org/1", "title": "#1", "episode_number": 1},
+        ]
+        pearls = [{"episode_url": "https://ex.org/2", "pearl": "x"}]  # only #2 has pearls
+        transcripts = [
+            {"episode_url": "https://ex.org/3", "source": "official", "text": "t"},
+            {"episode_url": "https://ex.org/1", "source": "youtube", "text": "t"},
+        ]
+        gap = compute_pearl_gap(episodes, pearls, transcripts)
+        # #2 excluded; newest-first ordering
+        self.assertEqual([g["episode_number"] for g in gap], [3, 1])
+        self.assertEqual(gap[0]["transcript_source"], "official")
+        self.assertTrue(gap[0]["has_transcript"])
+        self.assertEqual(gap[1]["transcript_source"], "youtube")
+
+    def test_gap_marks_missing_transcript(self):
+        from scripts.pearl_coverage import compute_pearl_gap
+        episodes = [{"url": "https://ex.org/9", "title": "#9", "episode_number": 9}]
+        gap = compute_pearl_gap(episodes, [], [])
+        self.assertEqual(len(gap), 1)
+        self.assertFalse(gap[0]["has_transcript"])
+        self.assertIsNone(gap[0]["transcript_source"])
 
 
 class IngestPlanTests(unittest.TestCase):

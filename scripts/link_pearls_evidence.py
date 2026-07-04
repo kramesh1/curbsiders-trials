@@ -31,7 +31,13 @@ Usage:
   python scripts/link_pearls_evidence.py generate --limit 5       # first 5 pending episodes
   python scripts/link_pearls_evidence.py generate                 # all (spends tokens!)
   python scripts/link_pearls_evidence.py report                   # coverage lift vs term-overlap
+  python scripts/link_pearls_evidence.py adjudicate --episode 500 --trial "SPRINT" --reject
   python scripts/link_pearls_evidence.py apply                    # merge reviewed links -> pearls_linked.json
+
+Adjudication is per individual link. `adjudicate` sets a per-link review_status
+(approved/rejected/reset) on the links matching its selectors, or applies a JSON
+feedback file via --from-file. `apply` then drops any link marked rejected while
+keeping its siblings. This is the "capture user feedback and re-apply" loop.
 """
 
 import argparse
@@ -194,6 +200,17 @@ def verify_links(raw_links, pearls: list[dict], pool: list[dict]) -> tuple[dict[
             continue
         bucket.append(citation)
     return by_pearl, dropped
+
+
+def link_status(link: dict, record: dict) -> str:
+    """Effective review status of one individual link.
+
+    Per-link status wins; otherwise the link inherits its record's status. This
+    is back-compat for the links generated before per-link adjudication existed
+    (they carry no per-link "review_status" and inherit the record's). Missing
+    everywhere -> "pending".
+    """
+    return link.get("review_status") or record.get("review_status") or "pending"
 
 
 def _call_model(client, model: str, prompt: str) -> str:
@@ -526,13 +543,15 @@ def cmd_report(args) -> int:
         only_det += det and not mod
 
     status = Counter(r.get("review_status") for r in links)
+    link_adjud = Counter(link_status(l, r) for r in links for l in r["links"])
     direct = sum(1 for r in links for l in r["links"] if l.get("support") == "direct")
     total_links = sum(len(r["links"]) for r in links)
 
     print("=== Pearl evidence linking ===")
     print(f"  Episodes processed:        {len(covered_episodes)}")
     print(f"  Pearls the model linked:   {len(links)}  ({total_links} links, {direct} direct)")
-    print(f"  Review status:             {dict(status)}")
+    print(f"  Review status (per pearl): {dict(status)}")
+    print(f"  Link adjudication:         {dict(link_adjud)}")
     print("\n  Over the processed episodes, vs the term-overlap baseline:")
     print(f"    pearls linked by baseline: {det_linked}")
     print(f"    pearls linked by model:    {model_linked}")
@@ -562,18 +581,172 @@ def cmd_apply(args) -> int:
         return 1
 
     applied = 0
+    dropped_links = 0
     out = []
     for pearl in pearls:
         pearl = dict(pearl)
         rec = links_by_key.get((pearl.get("episode_url"), _pearl_dedupe_key(pearl.get("pearl", ""))))
         if rec:
-            pearl["evidence_links"] = rec["links"]
-            applied += 1
+            # Honor per-link adjudication: keep every link the reviewer hasn't
+            # rejected. A pearl whose links are all rejected simply gets none.
+            kept = [l for l in rec["links"] if link_status(l, rec) != "rejected"]
+            dropped_links += len(rec["links"]) - len(kept)
+            if kept:
+                pearl["evidence_links"] = kept
+                applied += 1
         out.append(pearl)
 
     save_json(LINKED_PEARLS_FILE, out)
     print(f"Applied model links to {applied} pearl(s) -> {LINKED_PEARLS_FILE}")
+    if dropped_links:
+        print(f"Dropped {dropped_links} rejected link(s) during apply.")
     print(f"(data/pearls.json is left untouched by design.)")
+    return 0
+
+
+def _normalize_decision(value) -> str | None:
+    """Map a feedback verb to a stored per-link status ('approved'/'rejected'/'reset')."""
+    mapping = {
+        "approve": "approved", "approved": "approved",
+        "reject": "rejected", "rejected": "rejected",
+        "reset": "reset", "clear": "reset",
+    }
+    return mapping.get((value or "").strip().lower()) or None
+
+
+def _record_matches(record: dict, sel: dict) -> bool:
+    """True if a link record satisfies the record-level selectors present in sel."""
+    if "episode" in sel and record.get("episode_number") != sel["episode"]:
+        return False
+    if "episode_url" in sel and record.get("episode_url") != sel["episode_url"]:
+        return False
+    if "pearl_key" in sel and record.get("pearl_key") != sel["pearl_key"]:
+        return False
+    if "pearl" in sel:
+        hay = f"{record.get('pearl', '')}\n{record.get('pearl_key', '')}".lower()
+        if sel["pearl"].lower() not in hay:
+            return False
+    return True
+
+
+def _link_matches(link: dict, sel: dict) -> bool:
+    """True if an individual link satisfies the link-level selectors present in sel."""
+    if "canonical_key" in sel and link.get("canonical_key") != sel["canonical_key"]:
+        return False
+    if "trial" in sel:
+        hay = f"{link.get('citation_label', '')}\n{link.get('paper_title', '')}".lower()
+        if sel["trial"].lower() not in hay:
+            return False
+    if "confidence" in sel:
+        want = None if sel["confidence"] == "none" else sel["confidence"]
+        if link.get("confidence") != want:
+            return False
+    if "support" in sel and link.get("support") != sel["support"]:
+        return False
+    return True
+
+
+def apply_decision(links: list[dict], *, decision: str, note, reviewed_at: str,
+                   record_sel: dict, link_sel: dict, dry_run: bool = False) -> int:
+    """Set (or clear) the per-link status on every link matching the selectors.
+
+    Returns the number of links touched. When dry_run, counts without mutating.
+    """
+    touched = 0
+    for record in links:
+        if not _record_matches(record, record_sel):
+            continue
+        for link in record.get("links", []):
+            if not _link_matches(link, link_sel):
+                continue
+            touched += 1
+            if dry_run:
+                continue
+            if decision == "reset":
+                link.pop("review_status", None)
+                link.pop("reviewed_at", None)
+                link.pop("review_note", None)
+            else:
+                link["review_status"] = decision  # "approved" | "rejected"
+                link["reviewed_at"] = reviewed_at
+                if note is not None:
+                    link["review_note"] = note
+    return touched
+
+
+def cmd_adjudicate(args) -> int:
+    """Accept/reject individual links from CLI selectors or a feedback file."""
+    from collections import Counter
+
+    links = load_json(LINKS_FILE, [])
+    if not links:
+        print(f"No links to adjudicate ({LINKS_FILE} is empty). Run generate first.")
+        return 1
+
+    reviewed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ops = []  # each: (record_sel, link_sel, decision, note)
+
+    if args.from_file:
+        feedback = load_json(Path(args.from_file), None)
+        if not isinstance(feedback, list):
+            print(f"Feedback file {args.from_file} must be a JSON list of decision objects.")
+            return 1
+        for i, entry in enumerate(feedback):
+            decision = _normalize_decision(entry.get("decision"))
+            if decision is None:
+                print(f"  entry {i}: skipped (decision must be approve|reject|reset)")
+                continue
+            record_sel = {}
+            for key in ("episode", "episode_url", "pearl", "pearl_key"):
+                src = "episode_number" if key == "episode" else key
+                if entry.get(src) is not None:
+                    record_sel[key] = entry[src]
+            link_sel = {k: entry[k] for k in ("trial", "canonical_key", "confidence", "support")
+                        if entry.get(k) is not None}
+            if not record_sel and not link_sel:
+                print(f"  entry {i}: skipped (no selectors — would touch every link)")
+                continue
+            ops.append((record_sel, link_sel, decision, entry.get("note")))
+    else:
+        record_sel = {}
+        if args.episode is not None:
+            record_sel["episode"] = args.episode
+        if args.pearl is not None:
+            record_sel["pearl"] = args.pearl
+        link_sel = {}
+        if args.trial is not None:
+            link_sel["trial"] = args.trial
+        if args.canonical_key is not None:
+            link_sel["canonical_key"] = args.canonical_key
+        if args.confidence is not None:
+            link_sel["confidence"] = args.confidence
+        if args.support is not None:
+            link_sel["support"] = args.support
+        if args.action is None:
+            print("Pass an action: --reject, --approve, or --reset (or use --from-file).")
+            return 1
+        if not record_sel and not link_sel:
+            print("Refusing to adjudicate every link: pass at least one selector "
+                  "(--episode/--pearl/--trial/--canonical-key/--confidence/--support) or --from-file.")
+            return 1
+        ops.append((record_sel, link_sel, args.action, args.note))
+
+    if not ops:
+        print("Nothing to adjudicate.")
+        return 0
+
+    total = 0
+    for record_sel, link_sel, decision, note in ops:
+        total += apply_decision(links, decision=decision, note=note, reviewed_at=reviewed_at,
+                                record_sel=record_sel, link_sel=link_sel, dry_run=args.dry_run)
+
+    verb = "Would update" if args.dry_run else "Updated"
+    print(f"{verb} {total} link(s) across {len(ops)} rule(s).")
+    if total and not args.dry_run:
+        save_json(LINKS_FILE, links)
+        print(f"Wrote {LINKS_FILE}. Re-run `apply` to refresh data/pearls_linked.json.")
+    link_adjud = Counter(link_status(l, r) for r in links for l in r["links"])
+    print(f"Link adjudication now: {dict(link_adjud)}")
     return 0
 
 
@@ -608,6 +781,31 @@ def main() -> int:
     a.add_argument("--include-pending", action="store_true",
                    help="Also apply links still marked pending (default: approved only)")
     a.set_defaults(func=cmd_apply)
+
+    d = sub.add_parser("adjudicate",
+                       help="Approve/reject individual links from selectors or a feedback file")
+    d.add_argument("--episode", type=int, default=None, help="Only links on this episode number")
+    d.add_argument("--pearl", default=None, help="Only pearls whose text/key contains this substring")
+    d.add_argument("--trial", default=None,
+                   help="Only links whose citation_label/paper_title contains this substring")
+    d.add_argument("--canonical-key", dest="canonical_key", default=None,
+                   help="Only the link with this exact trial canonical_key")
+    d.add_argument("--confidence", choices=["high", "medium", "low", "none"], default=None,
+                   help="Only links with this model confidence ('none' = null)")
+    d.add_argument("--support", choices=["direct", "background"], default=None,
+                   help="Only links with this support type")
+    action = d.add_mutually_exclusive_group()
+    action.add_argument("--reject", dest="action", action="store_const", const="rejected",
+                        help="Reject the matching links (dropped by apply)")
+    action.add_argument("--approve", dest="action", action="store_const", const="approved",
+                        help="Approve the matching links")
+    action.add_argument("--reset", dest="action", action="store_const", const="reset",
+                        help="Clear per-link status (links fall back to their record's status)")
+    d.add_argument("--note", default=None, help="Free-text review note stored on each touched link")
+    d.add_argument("--from-file", dest="from_file", default=None,
+                   help="Apply a JSON list of decision objects instead of CLI selectors")
+    d.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
+    d.set_defaults(func=cmd_adjudicate, action=None)
 
     args = parser.parse_args()
     return args.func(args)

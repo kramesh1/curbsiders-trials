@@ -5,3 +5,6 @@ __pycache__/
 .DS_Store
 data/batches/
 .claude/settings.local.json
+ingest.log
+ingest.lock
+ingest.lock.d/

@@ -106,6 +106,18 @@ def print_report() -> None:
     pearl_topic = sum(1 for p in pearls if p.get("clinical_topic"))
     categories = Counter(t.get("episode_category") for t in trials if t.get("episode_category"))
 
+    # Episodes with zero extracted pearls (join on episode_url); annotated with
+    # transcript availability so it's clear how many are feedable to the
+    # candidate-pearl generator. Full list: python scripts/pearl_coverage.py
+    try:
+        from scripts.pearl_coverage import compute_pearl_gap
+        from scripts.fetch_transcripts import TRANSCRIPTS_FILE
+    except ImportError:
+        from pearl_coverage import compute_pearl_gap
+        from fetch_transcripts import TRANSCRIPTS_FILE
+    gap = compute_pearl_gap(episodes, pearls, load_json(TRANSCRIPTS_FILE, []))
+    gap_with_transcript = sum(1 for g in gap if g["has_transcript"])
+
     print("\n=== Classification & detail coverage ===")
     print(f"  Episodes:                {len(episodes)}")
     print(f"  Trials with a segment:   {trial_seg}/{len(trials)} ({_pct(trial_seg, len(trials))})")
@@ -115,6 +127,8 @@ def print_report() -> None:
     print(f"  Trials with a journal:   {trial_journal}/{len(trials)} ({_pct(trial_journal, len(trials))})")
     print(f"  Pearls with a segment:   {pearl_seg}/{len(pearls)} ({_pct(pearl_seg, len(pearls))})")
     print(f"  Pearls with clinical_topic:{pearl_topic}/{len(pearls)} ({_pct(pearl_topic, len(pearls))})")
+    print(f"  Episodes without pearls: {len(gap)}/{len(episodes)} "
+          f"({gap_with_transcript} have a transcript; see pearl_coverage.py)")
     print(f"  Category distribution:   {categories.most_common()}")
 
 

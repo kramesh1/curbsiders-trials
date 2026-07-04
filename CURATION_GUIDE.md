@@ -43,11 +43,30 @@ For each reviewed record, confirm:
 - `specialty_tags` are useful for discovery.
 - Episode backlinks point to the right source episode.
 
+## Adjudicating pearl evidence links
+
+The model-assisted pearl→evidence links (`data/pearl_evidence_links.json`) are reviewed
+**per individual link**, so a single off-topic study can be dropped without discarding a
+pearl's good citations. Start from the report, reject what doesn't hold up, then re-apply:
+
+```bash
+python scripts/link_pearls_evidence.py report            # coverage + per-link adjudication counts
+# Reject a specific link (preview with --dry-run first):
+python scripts/link_pearls_evidence.py adjudicate --episode 500 --trial "SPRINT" --reject --note "off-topic"
+python scripts/link_pearls_evidence.py apply             # refresh data/pearls_linked.json
+```
+
+Good first review queue: the low-confidence and `background`-support links
+(`--confidence low`, `--support background`). Use `--reset` to undo a decision, or
+`--from-file feedback.json` to apply a batch of captured decisions. Only rejected links
+are dropped by `apply`; everything else stays.
+
 ## Local QA Commands
 
 ```bash
 python scripts/build_site.py
 python scripts/validate_repository.py
+python scripts/pearl_coverage.py            # episodes with no pearls yet (+ transcript availability)
 python -m unittest discover -s tests
 python -m py_compile scripts/*.py tests/*.py
 ```
