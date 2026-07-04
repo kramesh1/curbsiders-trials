@@ -258,10 +258,12 @@ def call_openai(client, model: str, prompt: str) -> str:
 
 
 def call_anthropic(client, model: str, prompt: str) -> str:
+    # No temperature: the 4.7/4.8-era models (and Sonnet 5) reject temperature/top_p/top_k
+    # with a 400, so we omit it and rely on the prompt for determinism. Older models that
+    # still accept it are unaffected by its absence (they default to a low sampling temp).
     message = client.messages.create(
         model=model,
         max_tokens=3000,
-        temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text

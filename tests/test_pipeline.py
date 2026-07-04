@@ -31,6 +31,11 @@ from scripts.fetch_transcripts import (
 )
 from scripts.harvest_youtube_captions import episode_number_from_title, parse_vtt
 from scripts.generate_candidate_pearls import quote_is_verbatim
+from scripts.link_pearls_evidence import (
+    build_link_prompt,
+    episode_trial_pool,
+    verify_links,
+)
 from scripts.trial_utils import (
     build_canonical_trial_records,
     clean_text,
@@ -838,6 +843,86 @@ class EnrichmentNormalizationTests(unittest.TestCase):
         self.assertEqual(record["segments"], ["Diagnosis", "Thresholds"])
         self.assertEqual(record["clinical_topics"], ["Diagnosis", "Thresholds"])
         self.assertEqual(record["episode_categories"], ["cardiology", "preventive medicine"])
+
+
+class PearlEvidenceLinkerTests(unittest.TestCase):
+    def _pool(self):
+        return [
+            {
+                "citation_label": "SPRINT 2015",
+                "paper_title": "Intensive vs standard blood-pressure control",
+                "pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/26551272",
+                "year": 2015,
+                "study_type": "RCT",
+            },
+            {
+                "citation_label": "Appel 1997",
+                "paper_title": "Dietary patterns and blood pressure",
+                "pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/9099655",
+                "year": 1997,
+                "study_type": "RCT",
+            },
+        ]
+
+    def test_pool_drops_unidentifiable_and_dedupes(self):
+        trials = [
+            self._pool()[0],
+            dict(self._pool()[0]),                 # duplicate canonical_key
+            {"context_topic": "a vague aside"},    # no pubmed/title/label -> fallback key, unlinkable
+        ]
+        pool = episode_trial_pool(trials)
+        self.assertEqual(len(pool), 1)
+        self.assertEqual(pool[0]["citation_label"], "SPRINT 2015")
+
+    def test_verify_links_maps_indices_to_citations(self):
+        pool = self._pool()
+        pearls = [{"pearl": "Intensive BP control cuts CV events."}]
+        raw = [{"pearl": 0, "trial": 0, "support": "direct", "confidence": "high", "rationale": "SPRINT"}]
+        by_pearl, dropped = verify_links(raw, pearls, pool)
+        self.assertEqual(dropped, 0)
+        self.assertEqual(len(by_pearl[0]), 1)
+        cite = by_pearl[0][0]
+        self.assertEqual(cite["canonical_key"], "pubmed|https://pubmed.ncbi.nlm.nih.gov/26551272")
+        self.assertEqual(cite["support"], "direct")
+        self.assertEqual(cite["confidence"], "high")
+
+    def test_verify_links_drops_out_of_range_index(self):
+        pool = self._pool()
+        pearls = [{"pearl": "A pearl."}]
+        raw = [
+            {"pearl": 0, "trial": 5},   # trial index does not exist -> hallucination
+            {"pearl": 9, "trial": 0},   # pearl index does not exist
+            {"pearl": 0, "trial": 1},   # valid
+        ]
+        by_pearl, dropped = verify_links(raw, pearls, pool)
+        self.assertEqual(dropped, 2)
+        self.assertEqual(len(by_pearl[0]), 1)
+        self.assertEqual(by_pearl[0][0]["citation_label"], "Appel 1997")
+
+    def test_verify_links_dedupes_repeated_trial_for_a_pearl(self):
+        pool = self._pool()
+        pearls = [{"pearl": "A pearl."}]
+        raw = [{"pearl": 0, "trial": 0}, {"pearl": 0, "trial": 0}]
+        by_pearl, dropped = verify_links(raw, pearls, pool)
+        self.assertEqual(len(by_pearl[0]), 1)
+
+    def test_verify_links_normalizes_bad_support_and_confidence(self):
+        pool = self._pool()
+        pearls = [{"pearl": "A pearl."}]
+        raw = [{"pearl": 0, "trial": 0, "support": "tangential", "confidence": "certain"}]
+        by_pearl, _ = verify_links(raw, pearls, pool)
+        cite = by_pearl[0][0]
+        self.assertEqual(cite["support"], "direct")   # unknown support -> default direct
+        self.assertIsNone(cite["confidence"])         # unknown confidence -> None
+
+    def test_build_link_prompt_enumerates_pearls_and_trials(self):
+        pool = self._pool()
+        pearls = [{"pearl": "First pearl."}, {"pearl": "Second pearl."}]
+        prompt = build_link_prompt(500, "COPD Update", pearls, pool)
+        self.assertIn("[0] First pearl.", prompt)
+        self.assertIn("[1] Second pearl.", prompt)
+        self.assertIn("[0] SPRINT 2015", prompt)
+        self.assertIn("[1] Appel 1997", prompt)
 
 
 class IngestPlanTests(unittest.TestCase):
