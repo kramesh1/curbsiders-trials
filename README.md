@@ -27,13 +27,13 @@ As of July 4, 2026, the extraction pipeline has been run across the full scraped
 
 - `555` episodes marked completed in [data/extraction_state.json](data/extraction_state.json)
 - `0` failed episodes
-- `6797` extracted trial mentions in [data/trials.json](data/trials.json)
-- `6230` canonical trial records in [docs/data/trials.json](docs/data/trials.json)
+- `6793` extracted trial mentions in [data/trials.json](data/trials.json)
+- `6225` canonical trial records in [docs/data/trials.json](docs/data/trials.json)
 - `533` episodes with at least one extracted literature mention
 - `5903` canonical records with an outbound literature link
 - `1287` episode-level teaching pearls in [data/pearls.json](data/pearls.json) across `254` of `555` episodes; the remaining `301` episodes have no recognizable show-note `Pearls` section (see [pearl coverage](#pearl-coverage-gap) — `236` of those have a transcript and are feedable to the candidate-pearl generator)
-- `845` of those pearls now carry model-authored `evidence_links` (`1537` links across `227` episodes) in [data/pearl_evidence_links.json](data/pearl_evidence_links.json), applied onto [data/pearls_linked.json](data/pearls_linked.json)
-- `448` full-episode transcripts in [data/transcripts.json](data/transcripts.json): `94` official (human/CME-reviewed) and `354` YouTube auto-captions filling the gaps (`ai_generated`)
+- `845` pearls have model-drafted `evidence_links` (`1537` links across `227` episodes) in [data/pearl_evidence_links.json](data/pearl_evidence_links.json). Of those, `398` records have been reviewed and signed off (every link high-confidence/direct-support with a clinician-recognizable citation, spot-checked) and are applied onto [data/pearls_linked.json](data/pearls_linked.json); the remaining `447` are still `pending` and withheld from the site until a reviewer adjudicates them (see [Adjudication loop](#adjudication-loop))
+- `448` full-episode transcripts in `data/transcripts.json` (untracked, local-only — see note below): `94` official (human/CME-reviewed) and `354` YouTube auto-captions filling the gaps (`ai_generated`)
 
 The missing `22` episodes are currently zero-trial episodes, not ingestion failures.
 
@@ -44,11 +44,11 @@ The transcript corpus and the owner-gated candidate-pearl pass are a context/sea
 - [data/episodes.json](data/episodes.json)
   Scraped Curbsiders metadata and show notes. Each row also carries `transcript_url` when the show notes link an official transcript.
 
-- [data/transcripts.json](data/transcripts.json)
-  Full-episode text, one record per episode (`448` total), tagged by `source`. `source: "official"` (`94` episodes, mostly #247–424) is text from the transcript PDFs the show publishes — highest-fidelity, human/CME-reviewed, no ASR. `source: "youtube"` (`354` episodes) fills the gaps from the channel's auto-captions (`ai_generated: true`), which are speech recognition and carry the usual ASR error risk. Both are intended as a search/context corpus and input to the owner-gated candidate-pearl pass — **not** as a source for auto-published verbatim pearls (the deterministic pearl layer stays anchored to the show notes).
+- `data/transcripts.json` **(local-only, not tracked in git)**
+  Full-episode text, one record per episode (`448` total), tagged by `source`. `source: "official"` (`94` episodes, mostly #247–424) is text from the transcript PDFs the show publishes — highest-fidelity, human/CME-reviewed, no ASR. `source: "youtube"` (`354` episodes, most scraped via auto-captions rather than an official/licensed transcript) fills the gaps from the channel's auto-captions (`ai_generated: true`), which are speech recognition and carry the usual ASR error risk. Both are intended as a search/context corpus and input to the owner-gated candidate-pearl pass — **not** as a source for auto-published verbatim pearls (the deterministic pearl layer stays anchored to the show notes). Because this is full verbatim text of a copyrighted commercial podcast, it is deliberately kept out of the tracked/shared repo (see `.gitignore`) rather than redistributed; regenerate it locally with `python scripts/fetch_transcripts.py` and `python scripts/harvest_youtube_captions.py`.
 
-- [data/candidate_pearls.json](data/candidate_pearls.json) / [data/approved_pearls.json](data/approved_pearls.json)
-  Model-drafted teaching pearls from transcripts (candidate_pearls), each with a `supporting_quote` verified verbatim against the transcript and a `review_status`. A human sets `review_status: "approved"` and runs the `promote` step to copy those into approved_pearls; nothing here is ever written into `data/pearls.json`. See the owner-gated pass below.
+- [data/candidate_pearls.json](data/candidate_pearls.json) / `data/approved_pearls.json`
+  Model-drafted teaching pearls from transcripts (candidate_pearls), each with a `supporting_quote` verified verbatim against the transcript and a `review_status`. A human sets `review_status: "approved"` and runs the `promote` step to copy those into approved_pearls; nothing here is ever written into `data/pearls.json`. `approved_pearls.json` doesn't exist yet — nothing has been promoted so far. See the owner-gated pass below.
 
 - [data/extraction_state.json](data/extraction_state.json)
   Per-episode processing manifest with completion state, chunk counts, and errors.
@@ -60,7 +60,7 @@ The transcript corpus and the owner-gated candidate-pearl pass are a context/sea
   Episode-level teaching pearls extracted verbatim from show-note `Pearls` sections, each with the supporting citations found in the same episode.
 
 - [data/pearl_evidence_links.json](data/pearl_evidence_links.json) / [data/pearls_linked.json](data/pearls_linked.json)
-  The model-assisted pearl→evidence linking layer (owner-gated). The sidecar (`pearl_evidence_links`) holds, per pearl, the episode's own trials the model judged to support it — each link with `support`, `confidence`, a `rationale`, and a per-link `review_status` for adjudication. `apply` merges the reviewed (non-rejected) links onto a copy of the pearls as `evidence_links` in `pearls_linked.json`, leaving `data/pearls.json` untouched. See the linking section below.
+  The model-assisted pearl→evidence linking layer (owner-gated). The sidecar (`pearl_evidence_links`) holds, per pearl, the episode's own trials the model judged to support it — each link with `support`, `confidence`, a `rationale`, a per-link `review_status`, and a record-level `review_status`. `apply` only merges records marked `"approved"` at the record level (the reviewer's explicit sign-off), dropping any individual link marked `rejected`, onto a copy of the pearls as `evidence_links` in `pearls_linked.json` — leaving `data/pearls.json` untouched. See the linking section below.
 
 - [data/pearls_coverage_gap.json](data/pearls_coverage_gap.json)
   The list of episodes with no extracted pearls yet, each annotated with whether a transcript exists (and its source). Generated by `scripts/pearl_coverage.py`.
@@ -82,7 +82,7 @@ The transcript corpus and the owner-gated candidate-pearl pass are a context/sea
 
 2. `python scripts/fetch_transcripts.py`
 
-   Downloads the official transcript file linked by each episode's show notes, extracts its text, and writes [data/transcripts.json](data/transcripts.json). Resumable (skips already-fetched) and spends no model tokens. `--report` prints coverage; `--refresh` re-fetches everything.
+   Downloads the official transcript file linked by each episode's show notes, extracts its text, and writes `data/transcripts.json` (local-only, untracked). Resumable (skips already-fetched) and spends no model tokens. `--report` prints coverage; `--refresh` re-fetches everything.
 
    Optional gap-fill: `python scripts/harvest_youtube_captions.py` matches episodes without an official transcript to the show's YouTube videos (by episode number in the title) and stores the auto-captions as `source: "youtube"`. Needs `yt-dlp`; spends no model tokens; tagged `ai_generated` since captions are ASR.
 
@@ -150,24 +150,26 @@ python scripts/link_pearls_evidence.py apply                    # merge reviewed
 
 ### Adjudication loop
 
-Review is **per individual link**, so one bad trial link can be rejected without
-discarding the pearl's good links. `adjudicate` sets a per-link `review_status`
-(`approved` / `rejected` / `reset`) on the links matching its selectors; `apply` then
-drops any link marked `rejected` while keeping its siblings. Links generated before
-adjudication existed inherit their record's status, so nothing changes until you act.
+Review happens at **two levels**. Individual links are curated first (one bad trial
+link can be rejected without discarding the pearl's good links), then the whole record
+is explicitly signed off — `apply` only ever merges records marked `"approved"` at the
+record level, so nothing reaches the published site without that sign-off.
 
 ```bash
-# Reject one off-topic study on episode 500 (preview first with --dry-run):
+# 1. Reject one off-topic study on episode 500 (preview first with --dry-run):
 python scripts/link_pearls_evidence.py adjudicate --episode 500 --trial "SPRINT" --reject --note "off-topic"
+# 2. Once the pearl's surviving links check out against the show notes, sign off the record:
+python scripts/link_pearls_evidence.py adjudicate --episode 500 --record --approve --note "checked vs show notes"
 python scripts/link_pearls_evidence.py apply        # re-apply so pearls_linked.json reflects it
 
-# Other selectors: --pearl <substr>, --canonical-key <key>, --confidence low, --support background
-# Reset a link back to inherited status:
+# Other link-level selectors: --pearl <substr>, --canonical-key <key>, --confidence low, --support background
+# Reset a link (or, with --record, the whole record) back to pending:
 python scripts/link_pearls_evidence.py adjudicate --canonical-key "<key>" --reset
 ```
 
 To adjudicate in bulk from captured user feedback, pass a JSON list of decision
-objects (`{episode_number, canonical_key | trial, decision, note}`) via
+objects (`{episode_number, canonical_key | trial, decision, note, scope}`, where
+`scope: "record"` signs off the whole record instead of one link) via
 `--from-file feedback.json`, then `apply`.
 
 ## Pearl coverage gap

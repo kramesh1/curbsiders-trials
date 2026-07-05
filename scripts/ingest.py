@@ -57,9 +57,14 @@ except ImportError:
 SCRIPTS_DIR = Path(__file__).parent
 
 
-def plan_ingest(episodes: list[dict], state: dict) -> list[dict]:
-    """Episodes that still need extraction (not completed and not failed)."""
-    return pending_episodes(episodes, state, retry_failures=False, limit=None)
+def plan_ingest(episodes: list[dict], state: dict, *, retry_failures: bool = False) -> list[dict]:
+    """Episodes that still need extraction (not completed, and not failed unless retrying)."""
+    return pending_episodes(episodes, state, retry_failures=retry_failures, limit=None)
+
+
+def failed_episodes(state: dict) -> list[dict]:
+    """Episodes currently sitting in "failed" state, for the end-of-run warning."""
+    return [info for info in state.values() if info.get("status") == "failed"]
 
 
 def describe_episode(episode: dict) -> str:
@@ -149,6 +154,11 @@ def main() -> int:
         action="store_true",
         help="Skip scrape + model extraction; only re-run the deterministic enrich/pearls/site/validate layers",
     )
+    parser.add_argument(
+        "--retry-failures",
+        action="store_true",
+        help="Also re-attempt episodes previously marked failed, instead of treating them as permanently skipped",
+    )
     parser.add_argument("--report", action="store_true", help="Print a classification/detail coverage report after validation")
     parser.add_argument("--dry-run", action="store_true", help="Report pending episodes and exit without changing data")
     parser.add_argument("--max-wait-minutes", type=int, default=60, help="Batch backend: max minutes to wait")
@@ -173,14 +183,23 @@ def main() -> int:
 
     episodes = load_json(EPISODES_FILE, [])
     state = load_json(STATE_FILE, {})
-    pending = plan_ingest(episodes, state)
+    pending = plan_ingest(episodes, state, retry_failures=args.retry_failures)
 
-    completed = len(completed_episode_urls(state, retry_failures=False))
+    completed = len(completed_episode_urls(state, retry_failures=args.retry_failures))
     print(f"\nEpisodes total: {len(episodes)} | already processed: {completed} | pending: {len(pending)}")
     for episode in pending[:20]:
         print(f"  - {describe_episode(episode)}")
     if len(pending) > 20:
         print(f"  ... and {len(pending) - 20} more")
+
+    already_failed = failed_episodes(state) if not args.retry_failures else []
+    if already_failed:
+        print(f"\n{len(already_failed)} episode(s) are marked failed from a prior run and will be "
+              f"skipped (not retried). Pass --retry-failures to re-attempt them:")
+        for info in already_failed[:10]:
+            print(f"  - #{info.get('episode_number', '?')} {info.get('episode_title', '?')}: {info.get('error')}")
+        if len(already_failed) > 10:
+            print(f"  ... and {len(already_failed) - 10} more")
 
     if args.dry_run:
         print("\nDry run: no extraction, pearls, or site rebuild performed.")
@@ -196,11 +215,15 @@ def main() -> int:
             batch_args = ["run", "--max-wait-minutes", str(args.max_wait_minutes)]
             if args.model:
                 batch_args += ["--model", args.model]
+            if args.retry_failures:
+                batch_args += ["--retry-failures"]
             python_step("extract (batch)", "extract_trials_batch.py", *batch_args)
         else:
             extract_args = ["--backend", args.backend, "--workers", str(args.workers)]
             if args.model:
                 extract_args += ["--model", args.model]
+            if args.retry_failures:
+                extract_args += ["--retry-failures"]
             python_step("extract", "extract_trials.py", *extract_args)
     else:
         print("\nNo pending episodes; skipping extraction.")
@@ -221,10 +244,20 @@ def main() -> int:
 
     pearls_after = count_pearls()
     trials_after = len(load_json(TRIALS_FILE, []))
+    state_after = load_json(STATE_FILE, {})
+    pending_urls = {episode.get("url", "") for episode in pending}
+    succeeded = sum(1 for url in pending_urls if state_after.get(url, {}).get("status") == "completed")
+    newly_failed = sum(1 for url in pending_urls if state_after.get(url, {}).get("status") == "failed")
+
     print("\n=== Ingest summary ===")
-    print(f"  New episodes processed:  {0 if args.enrich_only else len(pending)}")
+    processed_line = f"  New episodes processed:  {0 if args.enrich_only else len(pending)}"
+    if not args.enrich_only and pending:
+        processed_line += f" ({succeeded} succeeded, {newly_failed} failed)"
+    print(processed_line)
     print(f"  Trial mentions (total):  {trials_after}")
     print(f"  Pearls (total):          {pearls_after} ({pearls_after - pearls_before:+d})")
+    if newly_failed:
+        print(f"  {newly_failed} episode(s) failed this run; see {STATE_FILE} or re-run with --retry-failures.")
 
     if args.report:
         print_report()

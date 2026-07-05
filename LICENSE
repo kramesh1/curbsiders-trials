@@ -28,3 +28,11 @@ show notes of The Curbsiders Internal Medicine Podcast (thecurbsiders.com) via
 automated extraction, and are provided for educational and research use only.
 They are not original works of the copyright holder above, are not warranted for
 clinical accuracy, and remain subject to the rights of their original sources.
+
+Full-episode transcripts (`data/transcripts.json`) are treated differently: they
+are a local, non-redistributed working artifact (see `.gitignore`), not part of
+this repository's tracked/shared contents, precisely because they are full
+verbatim text of a copyrighted commercial podcast (much of it sourced from
+YouTube auto-captions rather than an official or licensed transcript) rather
+than a derived summary. Regenerate them locally via `scripts/fetch_transcripts.py`
+and `scripts/harvest_youtube_captions.py`; do not redistribute them.

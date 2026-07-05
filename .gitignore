@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .DS_Store
 data/batches/
+data/transcripts.json
 .claude/settings.local.json
 ingest.log
 ingest.lock

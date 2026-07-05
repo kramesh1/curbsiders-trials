@@ -53,8 +53,36 @@ INDEX_FILE = DOCS_DIR / "index.html"
 
 
 def load_json(path: Path):
-    with path.open() as f:
-        return json.load(f)
+    try:
+        with path.open() as f:
+            return json.load(f)
+    except json.JSONDecodeError as error:
+        print(f"ERROR: {path.relative_to(ROOT)} is not valid JSON ({error}).")
+        sys.exit(1)
+    except OSError as error:
+        print(f"ERROR: could not read {path.relative_to(ROOT)} ({error}).")
+        sys.exit(1)
+
+
+VAGUE_LABEL_RE = re.compile(
+    r"^(a |the )?\d{0,4}\s*(recent |retrospective |prospective |observational |cohort |randomized )*"
+    r"(study|trial|analysis|review|guidance|guideline|report)s?\.?$",
+    re.IGNORECASE,
+)
+
+
+def _is_vague_citation_label(label: str | None) -> bool:
+    """A citation_label that fails CURATION_GUIDE's "recognizable to a clinician" bar.
+
+    Catches bare footnote numbers left unresolved by extraction (e.g. "12", "4,5,6")
+    and generic phrases with no name/trial acronym to actually identify the source.
+    """
+    label = (label or "").strip()
+    if not label:
+        return False  # missing label is a separate, softer condition (see bad_identity)
+    if re.fullmatch(r"[\d,\s]+", label):
+        return True
+    return bool(VAGUE_LABEL_RE.match(label))
 
 
 def require(condition: bool, message: str, errors: list[str]) -> None:
@@ -146,11 +174,19 @@ def main() -> int:
     bad_segments = _bad_segments(canonical) + _bad_segments(canonical_pearls)
     trials_with_segment = sum(1 for t in canonical if t.get("segments"))
     pearls_with_segment = sum(1 for p in canonical_pearls if p.get("segments"))
+    vague_labels = [
+        t.get("citation_label")
+        for t in canonical
+        if _is_vague_citation_label(t.get("citation_label"))
+    ]
 
     require(not bad_nct, "Some canonical trials have a malformed nct_id (expected NCT########).", errors)
     require(not bad_sample, "Some canonical trials have a non-positive-integer sample_size.", errors)
     require(not bad_categories, "Some records have a category outside the specialty vocabulary.", errors)
     require(not bad_segments, "Some records have an empty or non-string segment.", errors)
+    if vague_labels:
+        print(f"\nWARNING: {len(vague_labels)} canonical trial(s) have a bare-number or generic "
+              f"citation_label not recognizable to a clinician: {vague_labels}")
 
     print("Repository validation")
     print(f"  Episodes scraped:        {len(episodes)}")

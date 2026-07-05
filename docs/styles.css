@@ -673,6 +673,12 @@ footer {
   color: var(--ink-soft);
 }
 
+footer .disclaimer {
+  max-width: 640px;
+  margin: 0.5rem auto 0;
+  line-height: 1.5;
+}
+
 @media (max-width: 1140px) {
   .hero-inner,
   .layout {

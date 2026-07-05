@@ -51261,13 +51261,13 @@
       {
         "citation_label": "PARAGON-HF",
         "paper_title": null,
-        "pubmed_url": null,
+        "pubmed_url": "https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "year": null,
         "study_type": "RCT",
         "journal": null,
         "sample_size": null,
         "nct_id": null,
-        "canonical_key": "label|paragon hf|None",
+        "canonical_key": "pubmed|https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "score": 0.25
       },
       {
@@ -51315,13 +51315,13 @@
       {
         "citation_label": "PARAGON-HF",
         "paper_title": null,
-        "pubmed_url": null,
+        "pubmed_url": "https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "year": null,
         "study_type": "RCT",
         "journal": null,
         "sample_size": null,
         "nct_id": null,
-        "canonical_key": "label|paragon hf|None",
+        "canonical_key": "pubmed|https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "score": 0.25
       },
       {
@@ -51381,13 +51381,13 @@
       {
         "citation_label": "PARAGON-HF",
         "paper_title": null,
-        "pubmed_url": null,
+        "pubmed_url": "https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "year": null,
         "study_type": "RCT",
         "journal": null,
         "sample_size": null,
         "nct_id": null,
-        "canonical_key": "label|paragon hf|None",
+        "canonical_key": "pubmed|https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "score": 0.25
       },
       {
@@ -51423,13 +51423,13 @@
       {
         "citation_label": "PARAGON-HF",
         "paper_title": null,
-        "pubmed_url": null,
+        "pubmed_url": "https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "year": null,
         "study_type": "RCT",
         "journal": null,
         "sample_size": null,
         "nct_id": null,
-        "canonical_key": "label|paragon hf|None",
+        "canonical_key": "pubmed|https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "score": 0.25
       },
       {
@@ -51465,13 +51465,13 @@
       {
         "citation_label": "PARAGON-HF",
         "paper_title": null,
-        "pubmed_url": null,
+        "pubmed_url": "https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "year": null,
         "study_type": "RCT",
         "journal": null,
         "sample_size": null,
         "nct_id": null,
-        "canonical_key": "label|paragon hf|None",
+        "canonical_key": "pubmed|https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "score": 0.25
       },
       {
@@ -51591,26 +51591,14 @@
       {
         "citation_label": "PARAGON-HF",
         "paper_title": null,
-        "pubmed_url": null,
+        "pubmed_url": "https://www.ncbi.nlm.nih.gov/pubmed/31475794",
         "year": null,
         "study_type": "RCT",
         "journal": null,
         "sample_size": null,
         "nct_id": null,
-        "canonical_key": "label|paragon hf|None",
-        "score": 0.75
-      },
-      {
-        "citation_label": "Solomon, 2019 (PARAGON-HF)",
-        "paper_title": null,
-        "pubmed_url": "https://www.ncbi.nlm.nih.gov/pubmed/31475794",
-        "year": 2019,
-        "study_type": "RCT",
-        "journal": null,
-        "sample_size": null,
-        "nct_id": null,
         "canonical_key": "pubmed|https://www.ncbi.nlm.nih.gov/pubmed/31475794",
-        "score": 0.429
+        "score": 0.75
       },
       {
         "citation_label": "ESC 2017",

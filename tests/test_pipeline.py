@@ -34,6 +34,7 @@ from scripts.harvest_youtube_captions import episode_number_from_title, parse_vt
 from scripts.generate_candidate_pearls import quote_is_verbatim
 from scripts.link_pearls_evidence import (
     apply_decision,
+    apply_record_decision,
     build_link_prompt,
     episode_trial_pool,
     link_status,
@@ -1051,6 +1052,36 @@ class PearlEvidenceLinkerTests(unittest.TestCase):
         self.assertNotIn("review_status", links[0]["links"][0])
         self.assertNotIn("reviewed_at", links[0]["links"][0])
         self.assertEqual(link_status(links[0]["links"][0], rec), "approved")  # back to inherited
+
+    def test_per_link_reject_does_not_approve_the_record(self):
+        # Regression test: rejecting/approving individual links must never move
+        # the record-level review_status, which is the separate gate `apply` checks.
+        rec = self._link_record()
+        rec["review_status"] = "pending"
+        links = [rec]
+        apply_decision(links, decision="approved", note=None, reviewed_at="2026-07-04T00:00:00+00:00",
+                       record_sel={}, link_sel={"canonical_key": "pubmed|k1"})
+        self.assertEqual(links[0]["review_status"], "pending")
+
+    def test_apply_record_decision_approves_whole_record(self):
+        rec = self._link_record()
+        rec["review_status"] = "pending"
+        links = [rec]
+        touched = apply_record_decision(
+            links, decision="approved", note="checked against show notes",
+            reviewed_at="2026-07-04T00:00:00+00:00", record_sel={"episode": 500},
+        )
+        self.assertEqual(touched, 1)
+        self.assertEqual(links[0]["review_status"], "approved")
+        self.assertEqual(links[0]["review_note"], "checked against show notes")
+
+    def test_apply_record_decision_reset_reverts_to_pending(self):
+        rec = self._link_record()  # starts "approved" in the fixture
+        links = [rec]
+        apply_record_decision(links, decision="reset", note=None,
+                              reviewed_at="2026-07-04T00:00:00+00:00", record_sel={})
+        self.assertEqual(links[0]["review_status"], "pending")
+        self.assertNotIn("reviewed_at", links[0])
 
 
 class PearlCoverageTests(unittest.TestCase):

@@ -32,12 +32,18 @@ Usage:
   python scripts/link_pearls_evidence.py generate                 # all (spends tokens!)
   python scripts/link_pearls_evidence.py report                   # coverage lift vs term-overlap
   python scripts/link_pearls_evidence.py adjudicate --episode 500 --trial "SPRINT" --reject
+  python scripts/link_pearls_evidence.py adjudicate --episode 500 --record --approve
   python scripts/link_pearls_evidence.py apply                    # merge reviewed links -> pearls_linked.json
 
-Adjudication is per individual link. `adjudicate` sets a per-link review_status
-(approved/rejected/reset) on the links matching its selectors, or applies a JSON
-feedback file via --from-file. `apply` then drops any link marked rejected while
-keeping its siblings. This is the "capture user feedback and re-apply" loop.
+Adjudication happens at two levels. `adjudicate` without --record sets a per-link
+review_status (approved/rejected/reset) on the links matching its selectors, or
+applies a JSON feedback file via --from-file -- this curates *which* links survive
+within a pearl. `adjudicate --record` instead sets the whole record's review_status
+-- a reviewer's explicit sign-off that they've checked the pearl's surviving links
+against the show notes. `apply` only ever merges records whose review_status is
+"approved" (pass --include-pending to bypass that gate), and within an approved
+record drops any link marked rejected while keeping its siblings. This two-step
+gate exists so unreviewed model output never reaches the published site by default.
 """
 
 import argparse
@@ -328,8 +334,8 @@ def cmd_generate(args) -> int:
     print(f"\nDone. {linked_pearls} pearls linked, written to {LINKS_FILE}.")
     if total_dropped:
         print(f"Dropped {total_dropped} out-of-range index reference(s) the model returned.")
-    print("Review links (set review_status to \"approved\"), then run: "
-          "python scripts/link_pearls_evidence.py apply")
+    print("Review links (adjudicate --reject bad ones, then adjudicate --record --approve "
+          "each pearl), then run: python scripts/link_pearls_evidence.py apply")
     return 0
 
 
@@ -509,8 +515,8 @@ def cmd_collect(args) -> int:
         print(f"{errored} request(s) errored and were skipped.")
     if total_dropped:
         print(f"Dropped {total_dropped} out-of-range index reference(s) the model returned.")
-    print("Review links (set review_status to \"approved\"), then run: "
-          "python scripts/link_pearls_evidence.py apply")
+    print("Review links (adjudicate --reject bad ones, then adjudicate --record --approve "
+          "each pearl), then run: python scripts/link_pearls_evidence.py apply")
     return 0
 
 
@@ -674,8 +680,35 @@ def apply_decision(links: list[dict], *, decision: str, note, reviewed_at: str,
     return touched
 
 
+def apply_record_decision(links: list[dict], *, decision: str, note, reviewed_at: str,
+                          record_sel: dict, dry_run: bool = False) -> int:
+    """Set (or clear) the whole record's review_status -- the gate `apply` checks.
+
+    This is the reviewer's explicit sign-off that a pearl's surviving links (after
+    any per-link rejections) have been checked against the show notes, distinct
+    from per-link approve/reject which only curates which links survive.
+    """
+    touched = 0
+    for record in links:
+        if not _record_matches(record, record_sel):
+            continue
+        touched += 1
+        if dry_run:
+            continue
+        if decision == "reset":
+            record["review_status"] = "pending"
+            record.pop("reviewed_at", None)
+            record.pop("review_note", None)
+        else:
+            record["review_status"] = decision  # "approved" | "rejected"
+            record["reviewed_at"] = reviewed_at
+            if note is not None:
+                record["review_note"] = note
+    return touched
+
+
 def cmd_adjudicate(args) -> int:
-    """Accept/reject individual links from CLI selectors or a feedback file."""
+    """Accept/reject individual links, or sign off whole records, from CLI selectors or a feedback file."""
     from collections import Counter
 
     links = load_json(LINKS_FILE, [])
@@ -684,7 +717,7 @@ def cmd_adjudicate(args) -> int:
         return 1
 
     reviewed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    ops = []  # each: (record_sel, link_sel, decision, note)
+    ops = []  # each: (record_sel, link_sel, decision, note, scope)
 
     if args.from_file:
         feedback = load_json(Path(args.from_file), None)
@@ -703,10 +736,14 @@ def cmd_adjudicate(args) -> int:
                     record_sel[key] = entry[src]
             link_sel = {k: entry[k] for k in ("trial", "canonical_key", "confidence", "support")
                         if entry.get(k) is not None}
+            scope = "record" if entry.get("scope") == "record" else "link"
+            if scope == "record" and link_sel:
+                print(f"  entry {i}: skipped (scope=record cannot combine with link selectors)")
+                continue
             if not record_sel and not link_sel:
                 print(f"  entry {i}: skipped (no selectors — would touch every link)")
                 continue
-            ops.append((record_sel, link_sel, decision, entry.get("note")))
+            ops.append((record_sel, link_sel, decision, entry.get("note"), scope))
     else:
         record_sel = {}
         if args.episode is not None:
@@ -725,28 +762,38 @@ def cmd_adjudicate(args) -> int:
         if args.action is None:
             print("Pass an action: --reject, --approve, or --reset (or use --from-file).")
             return 1
+        if args.record and link_sel:
+            print("--record signs off the whole record's review_status; it cannot be combined "
+                  "with link-level selectors (--trial/--canonical-key/--confidence/--support).")
+            return 1
         if not record_sel and not link_sel:
             print("Refusing to adjudicate every link: pass at least one selector "
                   "(--episode/--pearl/--trial/--canonical-key/--confidence/--support) or --from-file.")
             return 1
-        ops.append((record_sel, link_sel, args.action, args.note))
+        ops.append((record_sel, link_sel, args.action, args.note, "record" if args.record else "link"))
 
     if not ops:
         print("Nothing to adjudicate.")
         return 0
 
     total = 0
-    for record_sel, link_sel, decision, note in ops:
-        total += apply_decision(links, decision=decision, note=note, reviewed_at=reviewed_at,
-                                record_sel=record_sel, link_sel=link_sel, dry_run=args.dry_run)
+    for record_sel, link_sel, decision, note, scope in ops:
+        if scope == "record":
+            total += apply_record_decision(links, decision=decision, note=note, reviewed_at=reviewed_at,
+                                           record_sel=record_sel, dry_run=args.dry_run)
+        else:
+            total += apply_decision(links, decision=decision, note=note, reviewed_at=reviewed_at,
+                                    record_sel=record_sel, link_sel=link_sel, dry_run=args.dry_run)
 
     verb = "Would update" if args.dry_run else "Updated"
-    print(f"{verb} {total} link(s) across {len(ops)} rule(s).")
+    print(f"{verb} {total} item(s) across {len(ops)} rule(s).")
     if total and not args.dry_run:
         save_json(LINKS_FILE, links)
         print(f"Wrote {LINKS_FILE}. Re-run `apply` to refresh data/pearls_linked.json.")
     link_adjud = Counter(link_status(l, r) for r in links for l in r["links"])
+    record_adjud = Counter(r.get("review_status") for r in links)
     print(f"Link adjudication now: {dict(link_adjud)}")
+    print(f"Record review_status now: {dict(record_adjud)}")
     return 0
 
 
@@ -794,6 +841,9 @@ def main() -> int:
                    help="Only links with this model confidence ('none' = null)")
     d.add_argument("--support", choices=["direct", "background"], default=None,
                    help="Only links with this support type")
+    d.add_argument("--record", action="store_true",
+                   help="Apply the decision to the whole record's review_status (the apply gate) "
+                        "instead of individual links; cannot combine with link-level selectors")
     action = d.add_mutually_exclusive_group()
     action.add_argument("--reject", dest="action", action="store_const", const="rejected",
                         help="Reject the matching links (dropped by apply)")

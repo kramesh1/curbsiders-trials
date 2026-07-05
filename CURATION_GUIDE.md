@@ -46,20 +46,33 @@ For each reviewed record, confirm:
 ## Adjudicating pearl evidence links
 
 The model-assisted pearl→evidence links (`data/pearl_evidence_links.json`) are reviewed
-**per individual link**, so a single off-topic study can be dropped without discarding a
-pearl's good citations. Start from the report, reject what doesn't hold up, then re-apply:
+at **two levels**. First, individual links are curated so a single off-topic study can be
+dropped without discarding a pearl's good citations. Second, once you're satisfied with a
+pearl's surviving links, you explicitly sign off the **whole record** — `apply` only ever
+merges records marked `"approved"` at the record level, so nothing reaches the published
+site without that explicit sign-off:
 
 ```bash
 python scripts/link_pearls_evidence.py report            # coverage + per-link adjudication counts
-# Reject a specific link (preview with --dry-run first):
+# 1. Reject links that don't hold up (preview with --dry-run first):
 python scripts/link_pearls_evidence.py adjudicate --episode 500 --trial "SPRINT" --reject --note "off-topic"
+# 2. Once you've checked the pearl's surviving links against the show notes, sign off the record:
+python scripts/link_pearls_evidence.py adjudicate --episode 500 --record --approve --note "checked vs show notes"
 python scripts/link_pearls_evidence.py apply             # refresh data/pearls_linked.json
 ```
 
 Good first review queue: the low-confidence and `background`-support links
-(`--confidence low`, `--support background`). Use `--reset` to undo a decision, or
-`--from-file feedback.json` to apply a batch of captured decisions. Only rejected links
-are dropped by `apply`; everything else stays.
+(`--confidence low`, `--support background`). Use `--reset` to undo a decision (per-link
+or, with `--record`, the whole record back to `pending`), or `--from-file feedback.json`
+to apply a batch of captured decisions (add `"scope": "record"` to an entry to sign off a
+record instead of a link). Only rejected links are dropped by `apply`, and only records
+you've explicitly marked `"approved"` are applied at all — `apply --include-pending` is
+available but bypasses that gate, so avoid it for anything headed to the public site.
+
+As of the last full pass, all 845 model-drafted records were reset to `"pending"` after
+discovering the record-level gate had been bulk-set to `"approved"` outside this workflow
+(i.e., without ever going through per-link/per-record adjudication). Treat every record as
+unreviewed until it has actually been through the steps above.
 
 ## Local QA Commands
 
