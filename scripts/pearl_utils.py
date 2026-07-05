@@ -287,6 +287,44 @@ def link_pearls_to_trials(
     return pearls
 
 
+def attach_evidence_links(pearls: list[dict], linked_records: list[dict]) -> list[dict]:
+    """Copy model `evidence_links` from a pearls_linked.json sidecar onto `pearls`.
+
+    Matches by (episode_url, pearl_key) rather than swapping pearls.json for the
+    sidecar wholesale, so pearls added since the last `link_pearls_evidence.py
+    apply` run (linking is owner-gated, not part of ingest.py) still show up --
+    they simply carry no evidence_links yet. Returns new dicts; does not mutate
+    the input pearls.
+    """
+    links_by_key = {
+        (record.get("episode_url"), _pearl_dedupe_key(record.get("pearl", ""))): record.get("evidence_links")
+        for record in linked_records
+        if record.get("evidence_links")
+    }
+    out = []
+    for pearl in pearls:
+        key = (pearl.get("episode_url"), _pearl_dedupe_key(pearl.get("pearl", "")))
+        evidence_links = links_by_key.get(key)
+        if evidence_links:
+            pearl = dict(pearl)
+            pearl["evidence_links"] = evidence_links
+        out.append(pearl)
+    return out
+
+
+# Rank model-linked evidence so the canonical merge can keep the single best
+# link per trial when the same pearl/trial pair recurs across episodes.
+_SUPPORT_RANK = {"direct": 2, "background": 1}
+_CONFIDENCE_RANK = {"high": 3, "medium": 2, "low": 1}
+
+
+def _evidence_link_rank(link: dict) -> tuple[int, int]:
+    return (
+        _SUPPORT_RANK.get(link.get("support"), 0),
+        _CONFIDENCE_RANK.get(link.get("confidence"), 0),
+    )
+
+
 def build_canonical_pearls(pearls: list[dict]) -> list[dict]:
     """Collapse the same pearl said across episodes into one record.
 
@@ -349,6 +387,20 @@ def build_canonical_pearls(pearls: list[dict]) -> list[dict]:
             key=lambda item: (-(item.get("score") or 0), item.get("citation_label") or ""),
         )
 
+        evidence_links: dict[str, dict] = {}
+        for record in records:
+            for link in record.get("evidence_links", []) or []:
+                canonical_key = link.get("canonical_key")
+                if not canonical_key:
+                    continue
+                existing = evidence_links.get(canonical_key)
+                if existing is None or _evidence_link_rank(link) > _evidence_link_rank(existing):
+                    evidence_links[canonical_key] = dict(link)
+        model_evidence = sorted(
+            evidence_links.values(),
+            key=lambda item: (-_evidence_link_rank(item)[0], -_evidence_link_rank(item)[1], item.get("citation_label") or ""),
+        )
+
         canonical.append({
             "pearl": pearl_text,
             "topics": topics,
@@ -361,6 +413,8 @@ def build_canonical_pearls(pearls: list[dict]) -> list[dict]:
             "latest_episode_number": max((ep.get("episode_number") or 0) for ep in episode_list) if episode_list else 0,
             "supporting_citations": supporting,
             "citation_count": len(supporting),
+            "evidence_links": model_evidence,
+            "evidence_link_count": len(model_evidence),
         })
 
     canonical.sort(

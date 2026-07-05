@@ -865,10 +865,49 @@ footer {
   color: var(--ink-soft);
 }
 .pearl-citation {
+  display: grid;
+  gap: 0.3rem;
+}
+.pearl-citation-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.45rem;
+}
+.pearl-evidence-title-secondary {
+  margin-top: 0.4rem;
+}
+.pearl-cite-rationale {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+.support-badge,
+.confidence-badge {
+  flex-shrink: 0;
+  padding: 0.3rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.support-badge.support-direct {
+  background: rgba(57, 114, 38, 0.13);
+  color: #376b1c;
+}
+.support-badge.support-background {
+  background: rgba(19, 34, 56, 0.08);
+  color: var(--ink-soft);
+}
+.confidence-badge {
+  background: rgba(31, 122, 122, 0.1);
+  color: var(--teal);
+}
+.confidence-badge.confidence-low {
+  background: rgba(19, 34, 56, 0.06);
+  color: var(--ink-soft);
 }
 .pearl-cite-name {
   border: none;

@@ -27,10 +27,19 @@ verifiable, owner-gated — see the README). `845` pearls now carry model `evide
   `--from-file` feedback list; `apply` drops rejected links while keeping their siblings.
   This is the "capture user feedback and re-apply" loop.
 
-Open follow-ups: carry `evidence_links` through `build_canonical_pearls`/`build_site.py`
-so the site's Teaching-pearls view can surface the model links (today the layer is a
-standalone sidecar, not wired into the site); and work a first review queue over the
-`129` low-confidence / background links.
+`evidence_links` now flows through: `pearl_utils.attach_evidence_links` merges the
+`pearls_linked.json` sidecar onto `data/pearls.json` by (episode_url, pearl_key) before
+canonicalization (so pearls added since the last `apply` run just show no links yet,
+rather than breaking the build), and `build_canonical_pearls` merges links across
+episodes per trial, keeping the highest-ranked (`direct` > `background`, then confidence)
+when the same pearl/trial pair recurs. The Teaching-pearls view now renders an "Evidence
+for this pearl" block with support/confidence badges and the model's rationale, ahead of
+any remaining term-overlap-only citations under "Also cited in this episode"; the
+"With evidence only" filter and pearl search now also account for `evidence_links`.
+
+Open follow-ups: work a first review queue over the `129` low-confidence / background
+links (the adjudication tooling exists in `link_pearls_evidence.py` but hasn't been run
+against real reviewer judgment yet).
 
 ## Local ingest automation (added July 2026)
 

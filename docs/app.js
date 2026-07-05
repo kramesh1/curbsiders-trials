@@ -907,7 +907,7 @@ function renderPearlsView() {
     return;
   }
 
-  const linkedCount = allPearls.filter(pearl => (pearl.supporting_citations || []).length).length;
+  const linkedCount = allPearls.filter(pearl => pearlHasEvidence(pearl)).length;
   const episodeCount = new Set(
     allPearls.flatMap(pearl => (pearl.episodes || []).map(episode => episode.episode_url).filter(Boolean))
   ).size;
@@ -974,7 +974,7 @@ function applyPearlFilters() {
 
   const needle = normalizeText(state.pearlQuery);
   filteredPearls = allPearls.filter(pearl => {
-    if (state.pearlLinkedOnly && !(pearl.supporting_citations || []).length) {
+    if (state.pearlLinkedOnly && !pearlHasEvidence(pearl)) {
       return false;
     }
     if (state.pearlSpecialties.size
@@ -1009,6 +1009,10 @@ function applyPearlFilters() {
     : `<div class="empty-state"><strong>No matching pearls</strong><p>Try a broader term or clear the specialty filter.</p></div>`;
 }
 
+function pearlHasEvidence(pearl) {
+  return !!((pearl.supporting_citations || []).length || (pearl.evidence_links || []).length);
+}
+
 function pearlMatchesQuery(pearl, needle) {
   const haystack = normalizeText([
     pearl.pearl,
@@ -1018,6 +1022,7 @@ function pearlMatchesQuery(pearl, needle) {
     ...(pearl.specialty_tags || []),
     ...(pearl.episode_categories || []),
     ...(pearl.supporting_citations || []).map(citation => citation.citation_label),
+    ...(pearl.evidence_links || []).map(link => link.citation_label),
     ...(pearl.episodes || []).map(episode => episode.episode_title),
   ].filter(Boolean).join(' '));
   return haystack.includes(needle);
@@ -1063,6 +1068,48 @@ function renderPearlLinkedToggle() {
   }
 }
 
+function citationRowHTML(citation) {
+  const label = citation.citation_label || citation.paper_title || 'Cited source';
+  const badge = `<span class="study-badge ${studyBadgeClass(citation.study_type)}">${esc(studyTypeLabel(citation.study_type))}</span>`;
+  const detailBits = [
+    citation.journal,
+    citation.sample_size ? `n=${Number(citation.sample_size).toLocaleString()}` : null,
+    citation.nct_id,
+  ].filter(Boolean);
+  const detail = detailBits.length
+    ? `<span class="pearl-cite-detail">${esc(detailBits.join(' · '))}</span>`
+    : '';
+  const pubmed = citation.pubmed_url
+    ? `<a class="pearl-cite-link" href="${escAttr(safeUrl(citation.pubmed_url))}" target="_blank" rel="noopener">source ↗</a>`
+    : '';
+  // Model-linked citations (from link_pearls_evidence.py) carry support/confidence/rationale;
+  // term-overlap-only citations do not.
+  const supportBadge = citation.support
+    ? `<span class="support-badge support-${esc(citation.support)}">${citation.support === 'direct' ? 'Direct evidence' : 'Background'}</span>`
+    : '';
+  const confidenceBadge = citation.confidence
+    ? `<span class="confidence-badge confidence-${esc(citation.confidence)}">${cap(citation.confidence)} confidence</span>`
+    : '';
+  const rationale = citation.rationale
+    ? `<p class="pearl-cite-rationale">${esc(citation.rationale)}</p>`
+    : '';
+  return `
+    <div class="pearl-citation">
+      <div class="pearl-citation-row">
+        <button class="pearl-cite-name" type="button" data-pearl-evidence="${escAttr(citation.canonical_key)}" title="Show this record in the evidence browser">
+          ${esc(truncate(label, 70))}
+        </button>
+        ${badge}
+        ${supportBadge}
+        ${confidenceBadge}
+        ${detail}
+        ${pubmed}
+      </div>
+      ${rationale}
+    </div>
+  `;
+}
+
 function pearlCardHTML(pearl) {
   // The segment is the sub-episode topic — more specific than the episode.
   const segments = (pearl.segments || []).slice(0, 2)
@@ -1072,34 +1119,21 @@ function pearlCardHTML(pearl) {
   const specialties = (pearl.specialty_tags || [])
     .map(tag => `<span class="tag">${esc(cap(tag))}</span>`).join('');
 
-  const citations = (pearl.supporting_citations || []).map(citation => {
-    const label = citation.citation_label || citation.paper_title || 'Cited source';
-    const badge = `<span class="study-badge ${studyBadgeClass(citation.study_type)}">${esc(studyTypeLabel(citation.study_type))}</span>`;
-    const detailBits = [
-      citation.journal,
-      citation.sample_size ? `n=${Number(citation.sample_size).toLocaleString()}` : null,
-      citation.nct_id,
-    ].filter(Boolean);
-    const detail = detailBits.length
-      ? `<span class="pearl-cite-detail">${esc(detailBits.join(' · '))}</span>`
-      : '';
-    const pubmed = citation.pubmed_url
-      ? `<a class="pearl-cite-link" href="${escAttr(safeUrl(citation.pubmed_url))}" target="_blank" rel="noopener">source ↗</a>`
-      : '';
-    return `
-      <div class="pearl-citation">
-        <button class="pearl-cite-name" type="button" data-pearl-evidence="${escAttr(citation.canonical_key)}" title="Show this record in the evidence browser">
-          ${esc(truncate(label, 70))}
-        </button>
-        ${badge}
-        ${detail}
-        ${pubmed}
-      </div>
-    `;
-  }).join('');
+  const evidenceLinks = pearl.evidence_links || [];
+  const modelLinkedKeys = new Set(evidenceLinks.map(link => link.canonical_key));
+  const modelCitations = evidenceLinks.map(link => citationRowHTML(link)).join('');
+  const otherCitations = (pearl.supporting_citations || [])
+    .filter(citation => !modelLinkedKeys.has(citation.canonical_key))
+    .map(citation => citationRowHTML(citation))
+    .join('');
 
-  const evidenceBlock = citations
-    ? `<div class="pearl-evidence"><p class="pearl-evidence-title">Supporting evidence</p>${citations}</div>`
+  const evidenceBlock = (modelCitations || otherCitations)
+    ? `
+      <div class="pearl-evidence">
+        ${modelCitations ? `<p class="pearl-evidence-title">Evidence for this pearl</p>${modelCitations}` : ''}
+        ${otherCitations ? `<p class="pearl-evidence-title pearl-evidence-title-secondary">Also cited in this episode</p>${otherCitations}` : ''}
+      </div>
+    `
     : `<p class="pearl-noevidence">Teaching point from the show notes — no cited study in this episode.</p>`;
 
   const episodes = (pearl.episodes || []).slice(0, 2).map(episode => {

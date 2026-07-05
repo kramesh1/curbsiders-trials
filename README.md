@@ -69,7 +69,7 @@ The transcript corpus and the owner-gated candidate-pearl pass are a context/sea
   Canonicalized site dataset with one record per trial or paper plus backlinks to all episodes mentioning it.
 
 - [docs/data/pearls.json](docs/data/pearls.json)
-  Canonicalized pearls for the site: one record per unique pearl, with episode backlinks and links (by `canonical_key`) into the trial records that support it.
+  Canonicalized pearls for the site: one record per unique pearl, with episode backlinks, term-overlap citations, and (when present) model-authored `evidence_links` merged across episodes, keeping the highest-ranked link per trial. The Teaching-pearls view renders these ahead of any remaining term-overlap-only citations.
 
 - `data/batches/`
   Optional local OpenAI Batch API inputs and outputs. These are ignored for sharing because they can contain request payloads, provider object IDs, and machine-specific paths.
@@ -100,7 +100,7 @@ The transcript corpus and the owner-gated candidate-pearl pass are a context/sea
 
 6. `python scripts/build_site.py`
 
-   Canonicalizes duplicate trial mentions across episodes and rewrites [docs/data/trials.json](docs/data/trials.json), and canonicalizes pearls into [docs/data/pearls.json](docs/data/pearls.json), for the browser UI.
+   Canonicalizes duplicate trial mentions across episodes and rewrites [docs/data/trials.json](docs/data/trials.json), and canonicalizes pearls into [docs/data/pearls.json](docs/data/pearls.json), for the browser UI. If [data/pearls_linked.json](data/pearls_linked.json) exists, its `evidence_links` are merged onto the pearls first (by episode + pearl text) so the site can render them.
 
 The site is a static app rooted at [docs/index.html](docs/index.html).
 

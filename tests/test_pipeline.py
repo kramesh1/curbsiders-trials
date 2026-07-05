@@ -18,6 +18,7 @@ from scripts.extract_trials_batch import (
 )
 from scripts.ingest import plan_ingest
 from scripts.pearl_utils import (
+    attach_evidence_links,
     build_canonical_pearls,
     link_pearls_to_trials,
     parse_pearls_from_show_notes,
@@ -656,6 +657,73 @@ class CanonicalPearlTests(unittest.TestCase):
             trial_canonical_key(trial),
             "pubmed|https://pubmed.ncbi.nlm.nih.gov/26551272",
         )
+
+    def test_merges_evidence_links_preferring_higher_rank(self):
+        base = {
+            "topic": "Hypertension",
+            "pearl": "Confirm hypertension with out-of-office readings before starting treatment.",
+            "specialty_tags": ["cardiology"],
+        }
+        weak_link = {
+            "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/26551272",
+            "citation_label": "SPRINT",
+            "support": "background",
+            "confidence": "low",
+            "rationale": "Related but not the direct basis.",
+        }
+        strong_link = {
+            "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/26551272",
+            "citation_label": "SPRINT",
+            "support": "direct",
+            "confidence": "high",
+            "rationale": "SPRINT is the basis for the out-of-office confirmation threshold.",
+        }
+        pearls = [
+            {**base, "episode_number": 100, "episode_title": "#100 HTN", "episode_url": "https://example.org/100",
+             "episode_date": None, "evidence_links": [weak_link]},
+            {**base, "episode_number": 150, "episode_title": "#150 HTN redux", "episode_url": "https://example.org/150",
+             "episode_date": None, "evidence_links": [strong_link]},
+        ]
+        canonical = build_canonical_pearls(pearls)
+        self.assertEqual(len(canonical), 1)
+        self.assertEqual(canonical[0]["evidence_link_count"], 1)
+        self.assertEqual(canonical[0]["evidence_links"][0]["support"], "direct")
+        self.assertEqual(canonical[0]["evidence_links"][0]["confidence"], "high")
+
+    def test_no_evidence_links_when_none_present(self):
+        pearls = [{
+            "pearl": "Insoluble fiber promotes bowel regularity.",
+            "episode_number": 1, "episode_title": "#1", "episode_url": "https://example.org/1", "episode_date": None,
+        }]
+        canonical = build_canonical_pearls(pearls)
+        self.assertEqual(canonical[0]["evidence_links"], [])
+        self.assertEqual(canonical[0]["evidence_link_count"], 0)
+
+
+class AttachEvidenceLinksTests(unittest.TestCase):
+    def test_attaches_by_episode_and_pearl_key(self):
+        pearls = [
+            {"pearl": "Statement A.", "episode_url": "https://example.org/1"},
+            {"pearl": "Statement B.", "episode_url": "https://example.org/1"},
+        ]
+        linked_records = [
+            {"pearl": "Statement A.", "episode_url": "https://example.org/1",
+             "evidence_links": [{"canonical_key": "pubmed|1", "support": "direct"}]},
+        ]
+        out = attach_evidence_links(pearls, linked_records)
+        self.assertEqual(out[0]["evidence_links"], [{"canonical_key": "pubmed|1", "support": "direct"}])
+        self.assertNotIn("evidence_links", out[1])
+        # Does not mutate the input pearls.
+        self.assertNotIn("evidence_links", pearls[0])
+
+    def test_ignores_records_from_other_episodes(self):
+        pearls = [{"pearl": "Statement A.", "episode_url": "https://example.org/1"}]
+        linked_records = [
+            {"pearl": "Statement A.", "episode_url": "https://example.org/999",
+             "evidence_links": [{"canonical_key": "pubmed|1", "support": "direct"}]},
+        ]
+        out = attach_evidence_links(pearls, linked_records)
+        self.assertNotIn("evidence_links", out[0])
 
 
 SEGMENT_NOTES = "\n".join([

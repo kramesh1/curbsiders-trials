@@ -11,15 +11,16 @@ from pathlib import Path
 
 try:
     from scripts.trial_utils import build_canonical_trial_records
-    from scripts.pearl_utils import build_canonical_pearls
+    from scripts.pearl_utils import attach_evidence_links, build_canonical_pearls
 except ImportError:
     from trial_utils import build_canonical_trial_records
-    from pearl_utils import build_canonical_pearls
+    from pearl_utils import attach_evidence_links, build_canonical_pearls
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DOCS_DATA_DIR = Path(__file__).parent.parent / "docs" / "data"
 TRIALS_FILE = DATA_DIR / "trials.json"
 PEARLS_FILE = DATA_DIR / "pearls.json"
+LINKED_PEARLS_FILE = DATA_DIR / "pearls_linked.json"
 OUTPUT_FILE = DOCS_DATA_DIR / "trials.json"
 PEARLS_OUTPUT_FILE = DOCS_DATA_DIR / "pearls.json"
 
@@ -76,15 +77,22 @@ def build_pearls_site():
     with open(PEARLS_FILE) as f:
         pearls = json.load(f)
 
+    if LINKED_PEARLS_FILE.exists():
+        with open(LINKED_PEARLS_FILE) as f:
+            linked_records = json.load(f)
+        pearls = attach_evidence_links(pearls, linked_records)
+
     canonical_pearls = build_canonical_pearls(pearls)
     with open(PEARLS_OUTPUT_FILE, "w") as f:
         json.dump(canonical_pearls, f, ensure_ascii=False, separators=(",", ":"))
 
     with_citation = sum(1 for pearl in canonical_pearls if pearl.get("supporting_citations"))
+    with_model_evidence = sum(1 for pearl in canonical_pearls if pearl.get("evidence_links"))
     print(f"\nPearl site data written to {PEARLS_OUTPUT_FILE}")
-    print(f"  Pearl statements (raw):  {len(pearls)}")
-    print(f"  Canonical pearls:        {len(canonical_pearls)}")
-    print(f"  Pearls with a citation:  {with_citation}")
+    print(f"  Pearl statements (raw):     {len(pearls)}")
+    print(f"  Canonical pearls:           {len(canonical_pearls)}")
+    print(f"  Pearls with a citation:     {with_citation}")
+    print(f"  Pearls with model evidence: {with_model_evidence}")
 
 
 if __name__ == "__main__":
