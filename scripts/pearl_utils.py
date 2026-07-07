@@ -66,6 +66,29 @@ BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-*•·▪—]+|\d+[.)])\s+")
 # A trailing "(Author et al. 2024)" style citation tail on a pearl line.
 CITATION_TAIL_RE = re.compile(r"\s*\([^()]*\b(?:19|20)\d{2}[a-z]?\.?\)\s*$")
 
+# Some show notes wrap an inline parenthetical citation across multiple
+# lines -- a markdown link, a plain-text aside, or several citations joined
+# by "and"/",", each on its own line:
+#   "...leading cause of mortality ("
+#   "[Author et al.](https://example.com/path(2020)/article)"
+#   ")"
+# or:
+#   "...ACEi are preferred to ARBs ("
+#   "[ELITE II TRIAL](https://pubmed.ncbi.nlm.nih.gov/10821361/)"
+#   "and"
+#   "[CONSENSUS TRIAL](https://pubmed.ncbi.nlm.nih.gov/2883575/)"
+#   ")"
+# Left as-is, the line-oriented parser below would truncate the pearl at the
+# bare trailing "(" and then choke on the aside lines and the lone ")" line.
+# Collapse this pattern back into a single line before parsing so it's
+# handled the same way as an ordinary same-line citation. Bounded to a short
+# span so an unrelated, never-closed "(" elsewhere in the show notes can't
+# bridge into a distant, unrelated ")".
+SPLIT_CITATION_JOIN_RE = re.compile(
+    r"\s*\(\s*\r?\n(.{1,300}?)\r?\n\s*\)([^\n]*)",
+    re.DOTALL,
+)
+
 BARE_URL_RE = re.compile(r"https?://\S+")
 
 # Labels that carry no useful topic; treat these pearl blocks as untopiced.
@@ -146,6 +169,12 @@ def _strip_heading_decoration(line: str) -> str:
     return HEADING_DECORATION_RE.sub("", line.strip()).strip()
 
 
+def _join_split_citation(match: re.Match) -> str:
+    inner = re.sub(r"\s*\r?\n\s*", " ", match.group(1)).strip()
+    inner = re.sub(r"\s+,", ",", inner)
+    return f" ({inner}){match.group(2)}"
+
+
 def parse_pearls_from_show_notes(show_notes: str) -> list[dict]:
     """Extract verbatim pearl statements grouped under their topic heading.
 
@@ -153,7 +182,17 @@ def parse_pearls_from_show_notes(show_notes: str) -> list[dict]:
     duplicates (the pearls list often restates a line that also appears in a
     body segment) are collapsed.
     """
-    lines = [line.strip() for line in (show_notes or "").splitlines()]
+    show_notes = show_notes or ""
+    # Chained split-citations ("(\nA\n) ...more text... (\nB\n)" on what was
+    # originally one line) need more than one pass: a single sub() consumes
+    # the opening "(" of the second citation as part of the first match's
+    # trailing text, so re-apply until a pass makes no further change.
+    for _ in range(5):
+        joined = SPLIT_CITATION_JOIN_RE.sub(_join_split_citation, show_notes)
+        if joined == show_notes:
+            break
+        show_notes = joined
+    lines = [line.strip() for line in show_notes.splitlines()]
     n = len(lines)
     pearls: list[dict] = []
 
