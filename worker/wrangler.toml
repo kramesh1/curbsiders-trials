@@ -2,9 +2,9 @@ name = "curbsiders-feedback"
 main = "src/index.js"
 compatibility_date = "2026-06-01"
 
-# The GitHub Pages origin allowed to POST/OPTIONS from the browser. Update this
-# once Pages is enabled (see README's "Publishing (GitHub Pages)" section) --
-# e.g. "https://kramesh1.github.io".
+# The GitHub Pages origin allowed to POST/OPTIONS from the browser (the live
+# site is https://kramesh1.github.io/curbsiders-trials/, but Origin headers
+# never include the path, only the scheme+host).
 [vars]
 ALLOWED_ORIGIN = "https://kramesh1.github.io"
 

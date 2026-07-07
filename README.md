@@ -2,6 +2,8 @@
 
 This repository builds a searchable teaching reference of clinical trials, observational studies, systematic reviews, meta-analyses, and guidelines mentioned on The Curbsiders Internal Medicine Podcast.
 
+**Live site:** https://kramesh1.github.io/curbsiders-trials/ (public, unaffiliated with The Curbsiders; see [Publishing](#publishing-github-pages) and the site footer for disclaimers).
+
 The static site has two working modes:
 
 - **Teaching pearls** (default): verbatim clinical pearls pulled from the show-note `Pearls` sections, each linked to the trials, guidelines, and reviews cited in the same episode. This is the fastest path to a quick teaching point plus its evidence.
@@ -399,25 +401,33 @@ At a minimum, the next stage should include:
 
 ## Publishing (GitHub Pages)
 
-The site is the `docs/` folder and is ready to serve as a GitHub Page. It is
-**not enabled yet** — the repository is intentionally kept private.
+The site is the `docs/` folder, published live at
+**https://kramesh1.github.io/curbsiders-trials/**. Both the repository and the
+GitHub Pages deployment are **public**. Pages is configured under **Settings →
+Pages** with **Source: Deploy from a branch**, branch **`main`**, folder
+**`/docs`** — every push to `main` that touches `docs/` redeploys the live
+site automatically (usually within a minute or two; check
+**Settings → Pages** or `gh api repos/<owner>/<repo>/pages/builds/latest` for
+build status).
 
-To go live later:
+Because the repo and site are public:
 
-1. Open the repo on GitHub → **Settings** → **Pages**.
-2. Under **Build and deployment**, set **Source** to **Deploy from a branch**.
-3. Choose branch **`main`** and folder **`/docs`**, then **Save**.
-
-Notes:
-
-- GitHub Pages on a **private** repository requires a paid plan (GitHub Pro,
-  Team, or Enterprise). On a free plan you must make the repo public to publish.
-- Even from a private repo, the published Pages URL is publicly reachable
-  (access control for Pages is Enterprise-only). Enabling Pages effectively
-  makes the site public, while the source repository can stay private.
+- Treat everything under `data/` and `docs/data/` as world-readable. Don't add
+  secrets, tokens, or non-public data to tracked files — use `.env` (already
+  git-ignored) for credentials, matching `.env.example`.
+- `worker/wrangler.toml` is committed and public; it holds config only
+  (`ALLOWED_ORIGIN`, a placeholder D1 `database_id`), never secrets. Real
+  secrets (`ADMIN_TOKEN`, `IP_HASH_SALT`) are set via `wrangler secret put`
+  and never touch the repo.
+- `data/transcripts.json` (full-episode transcripts) is intentionally
+  git-ignored and never published — see the LICENSE data note for why.
+- The site footer carries a visible AI-generation disclaimer; keep it intact
+  in any template changes since the pearls/evidence links are model-assisted
+  and not clinically warranted.
 - `docs/.nojekyll` is present so GitHub serves the files verbatim (no Jekyll).
-- The page loads `data/trials.json` via a relative path and pulls Fuse.js and
-  Google Fonts from CDNs, so it needs network access at load time.
+- The page loads `docs/data/*.json` via a relative path and pulls Fuse.js
+  (pinned with an SRI hash) and Google Fonts from CDNs, so it needs network
+  access at load time.
 
 ## Tests
 
