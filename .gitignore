@@ -5,6 +5,8 @@ __pycache__/
 .DS_Store
 data/batches/
 data/transcripts.json
+data/pearl_feedback.json
+data/feedback_import_state.json
 .claude/settings.local.json
 ingest.log
 ingest.lock
