@@ -41,10 +41,24 @@ except ImportError:
 
 # A heading line that introduces a pearls block, e.g. "Nutrition Pearls".
 # We keep the optional label (the words before "Pearls") to use as a topic.
+# Allows the curly apostrophe show notes use in possessives ("Women's Pearls")
+# and the singular "Pearl" some episodes use for a single named pearl segment
+# ("Kashlak Pearl", "Matt's Pearl").
 PEARL_HEADING_RE = re.compile(
-    r"^(?P<label>[A-Za-z0-9][A-Za-z0-9 ,&/()'\-]{0,48}?\s+)?pearls$",
+    r"^(?P<label>[A-Za-z0-9][A-Za-z0-9 ,&/()'’\-]{0,48}?\s+)?pearls?$",
     re.IGNORECASE,
 )
+
+# Trailing decoration on an otherwise-bare heading line: "Clinical Pearls:",
+# "Kashlak Pearl:", "Matt's Pearl –" (heading-only, content follows on later
+# lines). Stripped before matching against PEARL_HEADING_RE.
+HEADING_DECORATION_RE = re.compile(r"[:\-–—]+\s*$")
+
+# A line that is only a bare list-enumeration marker with no text ("1.", "2)"),
+# an artifact of markdown lists getting split across lines when scraped. Safe
+# to skip without ending the pearls block, since it can never itself be a
+# heading or a real pearl statement.
+BARE_ENUMERATION_RE = re.compile(r"^\d+[.)]$")
 
 # Leading bullet/enumeration markers to strip from a pearl line.
 BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-*•·▪—]+|\d+[.)])\s+")
@@ -65,7 +79,14 @@ GENERIC_PEARL_LABELS = {
     "a few",
     "bonus",
     "tales from the curbside top",
+    "kashlak",
 }
+
+# A label that is only a host/guest name in possessive form ("Matt's",
+# "Rahul Ganatra's") carries no clinical topic -- it's a recurring named
+# segment, not a subject. A possessive phrase that continues past the name
+# ("Women's Hematology") is a real topic and should not match.
+POSSESSIVE_NAME_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z .]*['’]s$")
 
 # Lines that clearly end a pearls block even if they superficially look long.
 BOILERPLATE_PREFIXES = (
@@ -97,6 +118,8 @@ def _clean_pearl_topic(label) -> str | None:
     topic = topic.strip(" ,-&/")
     if not topic or topic.lower() in GENERIC_PEARL_LABELS:
         return None
+    if POSSESSIVE_NAME_LABEL_RE.match(topic):
+        return None
     return topic
 
 
@@ -117,6 +140,12 @@ def _strip_pearl_line(line: str) -> str:
     return stripped
 
 
+def _strip_heading_decoration(line: str) -> str:
+    """Strip trailing punctuation-only decoration so a heading like
+    "Clinical Pearls:" or "Matt's Pearl –" matches PEARL_HEADING_RE."""
+    return HEADING_DECORATION_RE.sub("", line.strip()).strip()
+
+
 def parse_pearls_from_show_notes(show_notes: str) -> list[dict]:
     """Extract verbatim pearl statements grouped under their topic heading.
 
@@ -131,7 +160,7 @@ def parse_pearls_from_show_notes(show_notes: str) -> list[dict]:
     i = 0
     while i < n:
         line = lines[i]
-        heading = PEARL_HEADING_RE.match(line) if line else None
+        heading = PEARL_HEADING_RE.match(_strip_heading_decoration(line)) if line else None
         if not heading or _ends_with_sentence_punct(line):
             i += 1
             continue
@@ -144,8 +173,13 @@ def parse_pearls_from_show_notes(show_notes: str) -> list[dict]:
             if not candidate:
                 i += 1
                 continue
+            # A bare list-number artifact ("1.") from a split markdown list;
+            # skip it without ending the block.
+            if BARE_ENUMERATION_RE.match(candidate):
+                i += 1
+                continue
             # A new pearls heading ends this block; let the outer loop handle it.
-            if PEARL_HEADING_RE.match(candidate) and not _ends_with_sentence_punct(candidate):
+            if PEARL_HEADING_RE.match(_strip_heading_decoration(candidate)) and not _ends_with_sentence_punct(candidate):
                 break
             stripped = _strip_pearl_line(candidate)
             if not _is_pearl_statement(stripped):
@@ -422,4 +456,55 @@ def build_canonical_pearls(pearls: list[dict]) -> list[dict]:
     )
     for index, pearl in enumerate(canonical):
         pearl["id"] = index
+        pearl["pearl_key"] = _pearl_dedupe_key(pearl["pearl"])
     return canonical
+
+
+def attach_feedback(canonical_pearls: list[dict], approved_feedback: list[dict]) -> list[dict]:
+    """Copy aggregated, human-approved visitor feedback onto matching pearls.
+
+    approved_feedback rows come from scripts/import_feedback.py apply, one row per
+    (pearl_key) or (pearl_key, canonical_key), each carrying a flag_summary (counts
+    per reason_code). Matches by key rather than replacing the canonical set
+    wholesale, so a pearl with no feedback yet renders unchanged. Returns new
+    dicts; does not mutate the input.
+    """
+    pearl_level = {
+        row["pearl_key"]: row["flag_summary"]
+        for row in approved_feedback
+        if row.get("pearl_key") and not row.get("canonical_key") and row.get("flag_summary")
+    }
+    link_level = {
+        (row["pearl_key"], row["canonical_key"]): row["flag_summary"]
+        for row in approved_feedback
+        if row.get("pearl_key") and row.get("canonical_key") and row.get("flag_summary")
+    }
+    if not pearl_level and not link_level:
+        return canonical_pearls
+
+    out = []
+    for pearl in canonical_pearls:
+        pearl_key = pearl.get("pearl_key")
+        flag_summary = pearl_level.get(pearl_key)
+        evidence_links = pearl.get("evidence_links") or []
+        linked_flags = {
+            link.get("canonical_key"): link_level.get((pearl_key, link.get("canonical_key")))
+            for link in evidence_links
+        }
+        linked_flags = {key: value for key, value in linked_flags.items() if value}
+        if not flag_summary and not linked_flags:
+            out.append(pearl)
+            continue
+
+        pearl = dict(pearl)
+        if flag_summary:
+            pearl["flag_summary"] = flag_summary
+        if linked_flags:
+            pearl["evidence_links"] = [
+                {**link, "flag_summary": linked_flags[link.get("canonical_key")]}
+                if link.get("canonical_key") in linked_flags
+                else link
+                for link in evidence_links
+            ]
+        out.append(pearl)
+    return out

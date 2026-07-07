@@ -19,10 +19,16 @@ from scripts.extract_trials_batch import (
 from scripts.ingest import plan_ingest
 from scripts.pearl_utils import (
     attach_evidence_links,
+    attach_feedback,
     build_canonical_pearls,
     link_pearls_to_trials,
     parse_pearls_from_show_notes,
     trial_canonical_key,
+)
+from scripts.import_feedback import (
+    _normalize_row,
+    _row_matches,
+    aggregate_approved,
 )
 from scripts.scrape_episodes import extract_transcript_url, parse_episode
 from scripts.fetch_transcripts import (
@@ -31,7 +37,7 @@ from scripts.fetch_transcripts import (
     looks_ai_generated,
 )
 from scripts.harvest_youtube_captions import episode_number_from_title, parse_vtt
-from scripts.generate_candidate_pearls import quote_is_verbatim
+from scripts.generate_candidate_pearls import quote_is_verbatim, restrict_to_pearl_gap
 from scripts.link_pearls_evidence import (
     apply_decision,
     apply_record_decision,
@@ -339,6 +345,22 @@ class QuoteVerificationTests(unittest.TestCase):
         self.assertFalse(quote_is_verbatim("", transcript))
 
 
+class PearlGapRestrictionTests(unittest.TestCase):
+    def test_excludes_episode_that_already_has_deterministic_pearls(self):
+        episodes = [
+            {"url": "https://x/1", "episode_number": 1},
+            {"url": "https://x/2", "episode_number": 2},
+        ]
+        pearls = [{"episode_url": "https://x/1", "pearl": "already has real pearls"}]
+        transcripts = [
+            {"episode_url": "https://x/1", "text": "t1"},
+            {"episode_url": "https://x/2", "text": "t2"},
+        ]
+        pool = [{"episode_url": "https://x/1"}, {"episode_url": "https://x/2"}]
+        result = restrict_to_pearl_gap(pool, episodes, pearls, transcripts)
+        self.assertEqual([t["episode_url"] for t in result], ["https://x/2"])
+
+
 class TranscriptExtractionTests(unittest.TestCase):
     def test_clean_text_collapses_whitespace(self):
         raw = "Line one   \n\n\n\nLine two\r\nLine three  \n"
@@ -562,6 +584,60 @@ The ketogenic diet is high in fat and very low in carbohydrates, and was origina
 
     def assertFalseIfPresent(self, pearls, needle):
         self.assertFalse(any(needle in pearl["pearl"] for pearl in pearls))
+
+    def test_heading_with_trailing_colon_matches(self):
+        notes = (
+            "Clinical Pearls:\n"
+            "Avoid antihistamines for generalized pruritus since most itch is not histamine-mediated.\n"
+        )
+        pearls = parse_pearls_from_show_notes(notes)
+        self.assertEqual(len(pearls), 1)
+
+    def test_heading_with_curly_apostrophe_matches(self):
+        notes = (
+            "Women’s Hematology Pearls\n"
+            "Approximately 20% of patients with heavy menstrual bleeding will have a bleeding diathesis.\n"
+        )
+        pearls = parse_pearls_from_show_notes(notes)
+        self.assertEqual(len(pearls), 1)
+        self.assertEqual(pearls[0]["topic"], "Women’s Hematology")
+
+    def test_singular_pearl_heading_with_trailing_dash_matches(self):
+        notes = (
+            "Kashlak Pearl:\n"
+            "Rivaroxaban carries a higher menstrual bleeding risk than vitamin K antagonists.\n"
+        )
+        pearls = parse_pearls_from_show_notes(notes)
+        self.assertEqual(len(pearls), 1)
+
+    def test_possessive_name_only_label_yields_no_topic(self):
+        notes = (
+            "Kashlak Pearl:\n"
+            "The bilirubin is intimately linked to Dr. Tapper’s heart, so check it in cirrhosis.\n"
+            "Matt’s Pearl –\n"
+            "Identify the pattern of liver injury first using the R score before ordering more labs.\n"
+        )
+        pearls = parse_pearls_from_show_notes(notes)
+        self.assertEqual(len(pearls), 2)
+        self.assertTrue(all(pearl["topic"] is None for pearl in pearls))
+
+    def test_possessive_phrase_with_real_topic_is_kept(self):
+        notes = (
+            "Women’s Hematology Pearls\n"
+            "Approximately 20% of patients with heavy menstrual bleeding will have a bleeding diathesis.\n"
+        )
+        pearls = parse_pearls_from_show_notes(notes)
+        self.assertEqual(pearls[0]["topic"], "Women’s Hematology")
+
+    def test_bare_enumeration_line_is_skipped_not_block_ending(self):
+        notes = (
+            "Clinical Pearls\n"
+            "1.\n"
+            "The lung microbiome is altered in both acute and chronic diseases.\n"
+            "2. The lung microbiome is altered by antibiotics, corticosteroids, and PPIs.\n"
+        )
+        pearls = parse_pearls_from_show_notes(notes)
+        self.assertEqual(len(pearls), 2)
 
     def test_toc_pearls_entry_yields_nothing(self):
         notes = "Show Segments\nPearls\nIntro\nCase\nOutro\n"
@@ -1113,6 +1189,184 @@ class PearlCoverageTests(unittest.TestCase):
         self.assertIsNone(gap[0]["transcript_source"])
 
 
+class PubmedUtilsTests(unittest.TestCase):
+    SAMPLE_EFETCH_XML = b"""<?xml version="1.0"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <Article>
+        <Journal>
+          <Title>New England Journal of Medicine</Title>
+          <JournalIssue>
+            <PubDate><Year>2015</Year></PubDate>
+          </JournalIssue>
+        </Journal>
+        <ArticleTitle>A Randomized Trial of Intensive versus Standard Blood-Pressure Control.</ArticleTitle>
+        <Abstract>
+          <AbstractText Label="BACKGROUND">Systolic blood pressure targets remain uncertain.</AbstractText>
+          <AbstractText Label="RESULTS">Intensive treatment lowered the primary outcome.</AbstractText>
+        </Abstract>
+        <PublicationTypeList>
+          <PublicationType>Randomized Controlled Trial</PublicationType>
+          <PublicationType>Journal Article</PublicationType>
+        </PublicationTypeList>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>
+"""
+
+    def test_resolve_pmid_handles_pubmed_and_legacy_urls(self):
+        from scripts.pubmed_utils import resolve_pmid
+        self.assertEqual(resolve_pmid("https://pubmed.ncbi.nlm.nih.gov/12345678/"), "12345678")
+        self.assertEqual(resolve_pmid("https://www.ncbi.nlm.nih.gov/pubmed/12345678"), "12345678")
+        self.assertIsNone(resolve_pmid("https://doi.org/10.1056/NEJMoa2035002"))
+        self.assertIsNone(resolve_pmid("https://www.nejm.org/doi/full/10.1056/NEJMoa2035002"))
+        self.assertIsNone(resolve_pmid(None))
+
+    def test_parse_efetch_response_extracts_structured_fields(self):
+        from scripts.pubmed_utils import parse_efetch_response
+        result = parse_efetch_response(self.SAMPLE_EFETCH_XML, pmid="26551272")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["pmid"], "26551272")
+        self.assertIn("Intensive versus Standard", result["title"])
+        self.assertIn("BACKGROUND:", result["abstract"])
+        self.assertIn("RESULTS:", result["abstract"])
+        self.assertEqual(result["journal"], "New England Journal of Medicine")
+        self.assertEqual(result["year"], 2015)
+        self.assertIn("Randomized Controlled Trial", result["publication_types"])
+
+    def test_parse_efetch_response_returns_none_for_missing_article(self):
+        from scripts.pubmed_utils import parse_efetch_response
+        empty = b"<PubmedArticleSet></PubmedArticleSet>"
+        self.assertIsNone(parse_efetch_response(empty, pmid="1"))
+
+    def test_parse_efetch_response_returns_none_for_malformed_xml(self):
+        from scripts.pubmed_utils import parse_efetch_response
+        self.assertIsNone(parse_efetch_response(b"not xml at all <<<", pmid="1"))
+
+
+class ScreenTrialsTests(unittest.TestCase):
+    def test_grounded_prompt_uses_abstract_and_flags_pubmed_abstract(self):
+        from scripts.screen_trials import build_screening_prompt
+        trial = {"canonical_key": "x", "citation_label": "SPRINT 2015"}
+        abstract = {
+            "title": "A Randomized Trial of Intensive versus Standard Blood-Pressure Control.",
+            "abstract": "BACKGROUND: ... RESULTS: ...",
+            "journal": "NEJM",
+            "year": 2015,
+            "publication_types": ["Randomized Controlled Trial"],
+        }
+        content, grounded_in = build_screening_prompt(trial, abstract)
+        self.assertEqual(grounded_in, "pubmed_abstract")
+        self.assertIn("BACKGROUND", content)
+        self.assertIn("NEJM", content)
+
+    def test_ungrounded_prompt_falls_back_to_show_notes_and_warns_conservative(self):
+        from scripts.screen_trials import build_screening_prompt
+        trial = {
+            "canonical_key": "x",
+            "citation_label": "Gowing 2016",
+            "brief_summary": "Alpha2-agonists reduce opioid withdrawal symptoms.",
+        }
+        content, grounded_in = build_screening_prompt(trial, None)
+        self.assertEqual(grounded_in, "show_notes_only")
+        self.assertIn("no PubMed abstract was available", content)
+        self.assertIn("Alpha2-agonists", content)
+
+    def test_parse_json_object_tolerates_code_fence(self):
+        from scripts.screen_trials import _parse_json_object
+        raw = '```json\n{"population": "adults", "confidence": "high"}\n```'
+        parsed = _parse_json_object(raw)
+        self.assertEqual(parsed["population"], "adults")
+        self.assertEqual(parsed["confidence"], "high")
+
+    def test_parse_json_object_returns_empty_dict_on_garbage(self):
+        from scripts.screen_trials import _parse_json_object
+        self.assertEqual(_parse_json_object("not json at all"), {})
+
+
+class AttachScreeningTests(unittest.TestCase):
+    def test_attaches_approved_screening_by_canonical_key(self):
+        from scripts.pubmed_utils import attach_screening
+        trials = [
+            {"canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/26551272", "citation_label": "SPRINT"},
+            {"canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/9099655", "citation_label": "Appel"},
+        ]
+        screening = [{
+            "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/26551272",
+            "grounded_in": "pubmed_abstract",
+            "population": "adults with hypertension",
+            "intervention": None,
+            "confidence": "high",
+        }]
+        out = attach_screening(trials, screening)
+        self.assertEqual(out[0]["population"], "adults with hypertension")
+        self.assertEqual(out[0]["grounded_in"], "pubmed_abstract")
+        self.assertEqual(out[0]["screening_confidence"], "high")
+        self.assertNotIn("intervention", out[0])  # null fields aren't attached
+        self.assertNotIn("grounded_in", out[1])   # unscreened trial is untouched
+
+
+class MergeApprovedPearlsTests(unittest.TestCase):
+    def _episode(self, url="https://ex.org/9", number=9):
+        return {
+            "url": url,
+            "title": f"#{number} Some Episode",
+            "episode_number": number,
+            "date": "2024-01-01",
+            "show_notes": "Intro\nSome show notes body.\n",
+        }
+
+    def test_maps_approved_candidate_into_pearl_record_shape(self):
+        from scripts.merge_approved_pearls import build_pearls_from_approved
+
+        approved = [{
+            "episode_url": "https://ex.org/9",
+            "statement": "Start low-dose ICS-formoterol as needed instead of a SABA alone in mild asthma.",
+            "topic": "Asthma",
+            "review_status": "approved",
+            "quote_verified": True,
+        }]
+        pearls = build_pearls_from_approved(approved, [self._episode()], [])
+        self.assertEqual(len(pearls), 1)
+        record = pearls[0]
+        self.assertEqual(record["episode_url"], "https://ex.org/9")
+        self.assertEqual(record["episode_number"], 9)
+        self.assertEqual(record["pearl_source"], "candidate_generation")
+        self.assertIn("ICS-formoterol", record["pearl"])
+
+    def test_merge_skips_candidate_duplicating_existing_pearl_in_same_episode(self):
+        from scripts.merge_approved_pearls import merge_pearls
+
+        deterministic = [{
+            "episode_url": "https://ex.org/9",
+            "pearl": "Start low-dose ICS-formoterol as needed instead of a SABA alone in mild asthma.",
+        }]
+        candidates = [{
+            "episode_url": "https://ex.org/9",
+            "pearl": "Start low-dose ICS-formoterol as needed instead of a SABA alone in mild asthma.",
+            "pearl_source": "candidate_generation",
+        }]
+        merged, skipped = merge_pearls(deterministic, candidates)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(skipped, 1)
+        self.assertEqual(merged[0]["pearl_source"], "show_notes")
+
+    def test_merge_adds_candidate_for_episode_with_no_existing_pearls(self):
+        from scripts.merge_approved_pearls import merge_pearls
+
+        deterministic = [{"episode_url": "https://ex.org/1", "pearl": "Existing pearl for episode 1."}]
+        candidates = [{
+            "episode_url": "https://ex.org/9",
+            "pearl": "A brand new candidate pearl for episode 9.",
+            "pearl_source": "candidate_generation",
+        }]
+        merged, skipped = merge_pearls(deterministic, candidates)
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(skipped, 0)
+
+
 class IngestPlanTests(unittest.TestCase):
     def test_plan_ingest_returns_only_unprocessed_episodes(self):
         episodes = [
@@ -1126,6 +1380,90 @@ class IngestPlanTests(unittest.TestCase):
         }
         pending = plan_ingest(episodes, state)
         self.assertEqual([episode["url"] for episode in pending], ["https://example.org/3"])
+
+
+class AttachFeedbackTests(unittest.TestCase):
+    def test_attaches_pearl_level_flag_summary_by_pearl_key(self):
+        pearls = [
+            {"pearl_key": "abc", "pearl": "Statement A.", "evidence_links": []},
+            {"pearl_key": "xyz", "pearl": "Statement B.", "evidence_links": []},
+        ]
+        approved = [{"pearl_key": "abc", "canonical_key": None, "flag_summary": {"outdated": 2}}]
+        out = attach_feedback(pearls, approved)
+        self.assertEqual(out[0]["flag_summary"], {"outdated": 2})
+        self.assertNotIn("flag_summary", out[1])
+        # Does not mutate the input pearls.
+        self.assertNotIn("flag_summary", pearls[0])
+
+    def test_attaches_link_level_flag_summary_by_pearl_and_canonical_key(self):
+        pearls = [{
+            "pearl_key": "abc",
+            "pearl": "Statement A.",
+            "evidence_links": [
+                {"canonical_key": "pubmed|1", "citation_label": "SPRINT"},
+                {"canonical_key": "pubmed|2", "citation_label": "DASH"},
+            ],
+        }]
+        approved = [{"pearl_key": "abc", "canonical_key": "pubmed|1", "flag_summary": {"wrong_citation": 1}}]
+        out = attach_feedback(pearls, approved)
+        links = out[0]["evidence_links"]
+        self.assertEqual(links[0]["flag_summary"], {"wrong_citation": 1})
+        self.assertNotIn("flag_summary", links[1])
+
+    def test_no_matching_feedback_leaves_pearls_unchanged(self):
+        pearls = [{"pearl_key": "abc", "pearl": "Statement A.", "evidence_links": []}]
+        out = attach_feedback(pearls, [{"pearl_key": "other", "flag_summary": {"unclear": 1}}])
+        self.assertNotIn("flag_summary", out[0])
+
+    def test_empty_approved_feedback_returns_input_unchanged(self):
+        pearls = [{"pearl_key": "abc", "pearl": "Statement A."}]
+        self.assertEqual(attach_feedback(pearls, []), pearls)
+
+
+class ImportFeedbackTests(unittest.TestCase):
+    def test_normalize_row_defaults_to_pending_review_status(self):
+        raw = {
+            "id": 7, "submitted_at": "2026-07-01T00:00:00+00:00", "target_type": "pearl",
+            "pearl_key": "abc", "pearl_text_snapshot": "Statement A.", "canonical_key": None,
+            "reason_code": "inaccurate", "comment": "not quite right", "episode_url": "https://ex.org/1",
+        }
+        row = _normalize_row(raw, imported_at="2026-07-02T00:00:00+00:00")
+        self.assertEqual(row["review_status"], "pending")
+        self.assertEqual(row["id"], 7)
+        self.assertEqual(row["reason_code"], "inaccurate")
+        self.assertEqual(row["imported_at"], "2026-07-02T00:00:00+00:00")
+
+    def test_row_matches_selectors(self):
+        row = {"id": 5, "pearl_key": "abc", "pearl_text_snapshot": "SPRINT lowers BP.",
+               "canonical_key": "pubmed|1", "reason_code": "wrong_citation"}
+        self.assertTrue(_row_matches(row, {"id": 5}))
+        self.assertFalse(_row_matches(row, {"id": 6}))
+        self.assertTrue(_row_matches(row, {"pearl": "sprint"}))
+        self.assertFalse(_row_matches(row, {"pearl": "dash"}))
+        self.assertTrue(_row_matches(row, {"canonical_key": "pubmed|1"}))
+        self.assertTrue(_row_matches(row, {"reason": "wrong_citation"}))
+        self.assertFalse(_row_matches(row, {"reason": "unclear"}))
+
+    def test_aggregate_approved_only_counts_approved_rows(self):
+        rows = [
+            {"pearl_key": "abc", "canonical_key": None, "target_type": "pearl",
+             "reason_code": "outdated", "review_status": "approved"},
+            {"pearl_key": "abc", "canonical_key": None, "target_type": "pearl",
+             "reason_code": "outdated", "review_status": "approved"},
+            {"pearl_key": "abc", "canonical_key": None, "target_type": "pearl",
+             "reason_code": "inaccurate", "review_status": "pending"},
+            {"pearl_key": "abc", "canonical_key": "pubmed|1", "target_type": "pearl_link",
+             "reason_code": "wrong_citation", "review_status": "approved"},
+        ]
+        aggregated = aggregate_approved(rows)
+        by_key = {(row["pearl_key"], row["canonical_key"]): row["flag_summary"] for row in aggregated}
+        self.assertEqual(by_key[("abc", None)], {"outdated": 2})
+        self.assertEqual(by_key[("abc", "pubmed|1")], {"wrong_citation": 1})
+        self.assertEqual(len(aggregated), 2)
+
+    def test_aggregate_approved_ignores_rows_without_pearl_key(self):
+        rows = [{"pearl_key": None, "target_type": "pearl", "reason_code": "other", "review_status": "approved"}]
+        self.assertEqual(aggregate_approved(rows), [])
 
 
 if __name__ == "__main__":

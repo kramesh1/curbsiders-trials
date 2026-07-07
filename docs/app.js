@@ -19,6 +19,19 @@ const PUBMED_OPTIONS = [
   { key: 'without', label: 'Without PubMed link' },
 ];
 
+// Update this after deploying worker/ (see README's visitor-feedback section) --
+// it's a public endpoint meant to be called from the browser, safe to embed.
+const FEEDBACK_ENDPOINT = 'https://curbsiders-feedback.YOUR_SUBDOMAIN.workers.dev/feedback';
+
+const FEEDBACK_REASONS = [
+  { key: 'inaccurate', label: "Inaccurate / doesn't match the source" },
+  { key: 'outdated', label: 'Outdated guidance' },
+  { key: 'wrong_citation', label: 'Wrong trial linked' },
+  { key: 'unclear', label: 'Unclear / confusing' },
+  { key: 'other', label: 'Other' },
+];
+const FEEDBACK_REASON_LABELS = Object.fromEntries(FEEDBACK_REASONS.map(r => [r.key, r.label]));
+
 const SEARCH_STOPWORDS = new Set([
   'a',
   'an',
@@ -115,6 +128,7 @@ async function init() {
   renderFilterControls();
   renderPearlsView();
   wireControls();
+  initFeedbackModal();
   applyFilters();
   applyPearlFilters();
 }
@@ -509,6 +523,19 @@ function wireControls() {
       return;
     }
 
+    const flagButton = event.target.closest('[data-flag-target]');
+    if (flagButton) {
+      openFeedbackModal({
+        targetType: flagButton.dataset.flagTarget,
+        pearlKey: flagButton.dataset.pearlKey,
+        canonicalKey: flagButton.dataset.canonicalKey || null,
+        pearlText: flagButton.dataset.pearlText || '',
+        episodeUrl: flagButton.dataset.episodeUrl || '',
+        triggerButton: flagButton,
+      });
+      return;
+    }
+
     const filterButton = event.target.closest('[data-filter-group]');
     if (filterButton) {
       handleFilterButton(filterButton.dataset.filterGroup, filterButton.dataset.filterKey);
@@ -529,6 +556,142 @@ function wireControls() {
       removeActiveFilter(removeFilterButton.dataset.removeFilter, removeFilterButton.dataset.value);
     }
   });
+}
+
+let feedbackContext = null;
+
+function initFeedbackModal() {
+  const overlay = document.createElement('div');
+  overlay.id = 'feedback-modal-overlay';
+  overlay.className = 'feedback-modal-overlay hidden';
+  overlay.innerHTML = `
+    <div class="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedback-modal-title">
+      <button class="feedback-modal-close" type="button" aria-label="Close">×</button>
+      <h3 id="feedback-modal-title" class="feedback-modal-title">Flag a problem</h3>
+      <p class="feedback-modal-subtitle"></p>
+      <form class="feedback-form">
+        <div class="feedback-reason-list">
+          ${FEEDBACK_REASONS.map(reason => `
+            <label class="feedback-reason-option">
+              <input type="radio" name="feedback-reason" value="${reason.key}" required>
+              <span>${esc(reason.label)}</span>
+            </label>
+          `).join('')}
+        </div>
+        <label class="feedback-comment-label" for="feedback-comment">Comment (optional)</label>
+        <textarea id="feedback-comment" class="feedback-comment" maxlength="500" rows="3" placeholder="Anything else that would help us fix this?"></textarea>
+        <input type="text" name="website" class="feedback-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <div class="feedback-modal-actions">
+          <button type="submit" class="feedback-submit-btn">Submit</button>
+        </div>
+        <p class="feedback-modal-status" aria-live="polite"></p>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) {
+      closeFeedbackModal();
+    }
+  });
+  overlay.querySelector('.feedback-modal-close').addEventListener('click', closeFeedbackModal);
+  overlay.querySelector('.feedback-form').addEventListener('submit', handleFeedbackSubmit);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !overlay.classList.contains('hidden')) {
+      closeFeedbackModal();
+    }
+  });
+}
+
+function openFeedbackModal(context) {
+  feedbackContext = context;
+  const overlay = document.getElementById('feedback-modal-overlay');
+  const form = overlay.querySelector('.feedback-form');
+  form.reset();
+  overlay.querySelector('.feedback-modal-status').textContent = '';
+  overlay.querySelector('.feedback-modal-subtitle').textContent = context.targetType === 'pearl_link'
+    ? "What's wrong with this evidence link?"
+    : "What's wrong with this pearl?";
+  overlay.classList.remove('hidden');
+}
+
+function closeFeedbackModal() {
+  const overlay = document.getElementById('feedback-modal-overlay');
+  if (overlay) {
+    overlay.classList.add('hidden');
+  }
+  feedbackContext = null;
+}
+
+function feedbackGuardKey(pearlKey, canonicalKey) {
+  return `feedback:${pearlKey}:${canonicalKey || '_'}`;
+}
+
+function hasFlaggedAlready(pearlKey, canonicalKey) {
+  try {
+    return localStorage.getItem(feedbackGuardKey(pearlKey, canonicalKey)) === '1';
+  } catch (err) {
+    return false;
+  }
+}
+
+async function handleFeedbackSubmit(event) {
+  event.preventDefault();
+  if (!feedbackContext) {
+    return;
+  }
+  const form = event.target;
+  const overlay = document.getElementById('feedback-modal-overlay');
+  const status = overlay.querySelector('.feedback-modal-status');
+  const reasonInput = form.querySelector('input[name="feedback-reason"]:checked');
+  if (!reasonInput) {
+    status.textContent = 'Pick a reason first.';
+    return;
+  }
+
+  const submitButton = form.querySelector('.feedback-submit-btn');
+  submitButton.disabled = true;
+  status.textContent = 'Sending…';
+
+  const payload = {
+    target_type: feedbackContext.targetType,
+    pearl_key: feedbackContext.pearlKey,
+    canonical_key: feedbackContext.canonicalKey || undefined,
+    reason_code: reasonInput.value,
+    comment: form.querySelector('.feedback-comment').value || undefined,
+    pearl_text_snapshot: feedbackContext.pearlText || undefined,
+    episode_url: feedbackContext.episodeUrl || undefined,
+    website: form.querySelector('.feedback-honeypot').value || undefined,
+  };
+
+  try {
+    const resp = await fetch(FEEDBACK_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}`);
+    }
+    try {
+      localStorage.setItem(feedbackGuardKey(feedbackContext.pearlKey, feedbackContext.canonicalKey), '1');
+    } catch (err) {
+      // localStorage may be unavailable (private browsing); not fatal.
+    }
+    if (feedbackContext.triggerButton) {
+      const done = document.createElement('span');
+      done.className = 'flag-done';
+      done.textContent = '✓ Flagged';
+      feedbackContext.triggerButton.replaceWith(done);
+    }
+    status.textContent = 'Thanks — flagged for review.';
+    setTimeout(closeFeedbackModal, 1200);
+  } catch (err) {
+    status.textContent = 'Could not submit — please try again later.';
+  } finally {
+    submitButton.disabled = false;
+  }
 }
 
 function handleFilterButton(group, key) {
@@ -1068,7 +1231,34 @@ function renderPearlLinkedToggle() {
   }
 }
 
-function citationRowHTML(citation) {
+function pearlFlagAttrs(pearl) {
+  const episodeUrl = (pearl.episodes && pearl.episodes[0] && pearl.episodes[0].episode_url) || '';
+  return `data-pearl-key="${escAttr(pearl.pearl_key)}" data-pearl-text="${escAttr(truncate(pearl.pearl, 400))}" data-episode-url="${escAttr(episodeUrl)}"`;
+}
+
+function flagCount(flagSummary) {
+  return Object.values(flagSummary || {}).reduce((sum, n) => sum + n, 0);
+}
+
+function flagSummaryTitle(flagSummary) {
+  return Object.entries(flagSummary || {})
+    .map(([reason, count]) => `${count} × ${FEEDBACK_REASON_LABELS[reason] || reason}`)
+    .join(', ');
+}
+
+function flagControlHTML(targetType, pearl, canonicalKey) {
+  if (hasFlaggedAlready(pearl.pearl_key, canonicalKey)) {
+    return '<span class="flag-done">✓ Flagged</span>';
+  }
+  const canonicalAttr = canonicalKey ? `data-canonical-key="${escAttr(canonicalKey)}"` : '';
+  const isLink = targetType === 'pearl_link';
+  const cls = isLink ? 'flag-btn flag-btn-link' : 'flag-btn';
+  const label = isLink ? '⚑' : '⚑ Flag';
+  const title = isLink ? 'Flag a problem with this evidence link' : 'Flag a problem with this pearl';
+  return `<button class="${cls}" type="button" data-flag-target="${targetType}" ${canonicalAttr} ${pearlFlagAttrs(pearl)} title="${title}">${label}</button>`;
+}
+
+function citationRowHTML(citation, pearl) {
   const label = citation.citation_label || citation.paper_title || 'Cited source';
   const badge = `<span class="study-badge ${studyBadgeClass(citation.study_type)}">${esc(studyTypeLabel(citation.study_type))}</span>`;
   const detailBits = [
@@ -1090,20 +1280,26 @@ function citationRowHTML(citation) {
   const confidenceBadge = citation.confidence
     ? `<span class="confidence-badge confidence-${esc(citation.confidence)}">${cap(citation.confidence)} confidence</span>`
     : '';
+  const flagSummary = citation.flag_summary
+    ? `<span class="flag-badge" title="${escAttr(flagSummaryTitle(citation.flag_summary))}">⚑ ${flagCount(citation.flag_summary)}</span>`
+    : '';
+  const flagButton = pearl ? flagControlHTML('pearl_link', pearl, citation.canonical_key) : '';
   const rationale = citation.rationale
     ? `<p class="pearl-cite-rationale">${esc(citation.rationale)}</p>`
     : '';
   return `
     <div class="pearl-citation">
-      <div class="pearl-citation-row">
+      <div class="pearl-citation-row" data-canonical-key="${escAttr(citation.canonical_key)}">
         <button class="pearl-cite-name" type="button" data-pearl-evidence="${escAttr(citation.canonical_key)}" title="Show this record in the evidence browser">
           ${esc(truncate(label, 70))}
         </button>
         ${badge}
         ${supportBadge}
         ${confidenceBadge}
+        ${flagSummary}
         ${detail}
         ${pubmed}
+        ${flagButton}
       </div>
       ${rationale}
     </div>
@@ -1121,10 +1317,10 @@ function pearlCardHTML(pearl) {
 
   const evidenceLinks = pearl.evidence_links || [];
   const modelLinkedKeys = new Set(evidenceLinks.map(link => link.canonical_key));
-  const modelCitations = evidenceLinks.map(link => citationRowHTML(link)).join('');
+  const modelCitations = evidenceLinks.map(link => citationRowHTML(link, pearl)).join('');
   const otherCitations = (pearl.supporting_citations || [])
     .filter(citation => !modelLinkedKeys.has(citation.canonical_key))
-    .map(citation => citationRowHTML(citation))
+    .map(citation => citationRowHTML(citation, pearl))
     .join('');
 
   const evidenceBlock = (modelCitations || otherCitations)
@@ -1149,10 +1345,18 @@ function pearlCardHTML(pearl) {
     ? `<p class="episode-more">+${pearl.episode_count - 2} more episode${pearl.episode_count - 2 === 1 ? '' : 's'}</p>`
     : '';
 
+  const pearlFlagSummary = pearl.flag_summary
+    ? `<span class="flag-badge" title="${escAttr(flagSummaryTitle(pearl.flag_summary))}">⚑ ${flagCount(pearl.flag_summary)} confirmed issue${flagCount(pearl.flag_summary) === 1 ? '' : 's'}</span>`
+    : '';
+
   return `
-    <article class="pearl-card">
+    <article class="pearl-card" data-pearl-key="${escAttr(pearl.pearl_key)}">
       <p class="pearl-text">${esc(pearl.pearl)}</p>
       <div class="pearl-tags">${segments}${topics}${specialties}</div>
+      <div class="pearl-actions">
+        ${pearlFlagSummary}
+        ${flagControlHTML('pearl', pearl, null)}
+      </div>
       ${evidenceBlock}
       <div class="pearl-footer">
         ${episodes}
@@ -1337,6 +1541,40 @@ function pageButton(label, page, disabled, active = false) {
   `;
 }
 
+function screeningHTML(trial) {
+  if (!trial.grounded_in) return '';
+  const groundingLabel = trial.grounded_in === 'pubmed_abstract' ? 'From PubMed abstract' : 'From show notes only';
+  const groundingBadge = `<span class="grounding-badge grounding-${esc(trial.grounded_in)}">${esc(groundingLabel)}</span>`;
+  const confidenceBadge = trial.screening_confidence
+    ? `<span class="confidence-badge confidence-${esc(trial.screening_confidence)}">${cap(trial.screening_confidence)} confidence</span>`
+    : '';
+  const picoFields = [
+    ['Population', trial.population],
+    ['Intervention', trial.intervention],
+    ['Comparator', trial.comparator],
+    ['Outcome', trial.outcome],
+  ].filter(([, value]) => Boolean(value));
+  const picoList = picoFields.length
+    ? `<dl class="pico-list">${picoFields.map(([label, value]) => `
+        <div class="pico-row"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>
+      `).join('')}</dl>`
+    : '';
+  const limitations = trial.study_quality_limitations
+    ? `<p class="card-limitations">${esc(trial.study_quality_limitations)}</p>`
+    : '';
+  if (!picoList && !limitations) return '';
+  return `
+    <div class="pico-block">
+      <div class="pico-block-header">
+        ${groundingBadge}
+        ${confidenceBadge}
+      </div>
+      ${picoList}
+      ${limitations}
+    </div>
+  `;
+}
+
 function cardHTML(trial) {
   const title = trial.citation_label || trial.paper_title || 'Untitled citation';
   const paperTitle = trial.paper_title && trial.paper_title !== title
@@ -1392,6 +1630,7 @@ function cardHTML(trial) {
 
       ${paperTitle}
       <p class="card-summary">${esc(trial.brief_summary || 'No summary available.')}</p>
+      ${screeningHTML(trial)}
       ${topicTags}
 
       <div class="meta-row">

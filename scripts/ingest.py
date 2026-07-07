@@ -8,6 +8,7 @@ validates. Designed to be safe to run on a schedule (e.g. weekly).
 Phases:
   1. scrape      refresh data/episodes.json (skips already-scraped episodes)
   2. transcripts harvest official transcript files for episodes that link one
+  2b. youtube    fill remaining transcript gaps from YouTube auto-captions
   3. extract     run the trial extractor on pending episodes only
   4. enrich      deterministically add segments + trial detail + category
   5. pearls      re-derive data/pearls.json (deterministic, cheap)
@@ -150,6 +151,11 @@ def main() -> int:
     parser.add_argument("--skip-scrape", action="store_true", help="Do not re-scrape; use the current episodes.json")
     parser.add_argument("--skip-transcripts", action="store_true", help="Do not harvest official transcript files")
     parser.add_argument(
+        "--skip-youtube-transcripts",
+        action="store_true",
+        help="Do not fill remaining transcript gaps from YouTube auto-captions (requires yt-dlp)",
+    )
+    parser.add_argument(
         "--enrich-only",
         action="store_true",
         help="Skip scrape + model extraction; only re-run the deterministic enrich/pearls/site/validate layers",
@@ -180,6 +186,17 @@ def main() -> int:
     # scrape for offline/enrich-only runs since it, too, is network-bound.
     if not args.skip_scrape and not args.skip_transcripts and not args.dry_run:
         python_step("transcripts", "fetch_transcripts.py")
+
+    # Phase 2b: fill remaining transcript gaps from YouTube auto-captions.
+    # Only fills episodes with no transcript yet (official transcripts win);
+    # also incremental and token-free, gated the same way as fetch_transcripts.
+    if (
+        not args.skip_scrape
+        and not args.skip_transcripts
+        and not args.skip_youtube_transcripts
+        and not args.dry_run
+    ):
+        python_step("youtube-transcripts", "harvest_youtube_captions.py")
 
     episodes = load_json(EPISODES_FILE, [])
     state = load_json(STATE_FILE, {})

@@ -23,7 +23,7 @@ The site is static, but it must be served over HTTP so the browser can fetch `do
 
 ## Current status
 
-As of July 4, 2026, the extraction pipeline has been run across the full scraped episode set, the teaching-pearls layer was added, a model-assisted pearl→evidence linking layer was added, a full-episode transcript corpus was harvested, and the site dataset was rebuilt.
+As of July 6, 2026, the extraction pipeline has been run across the full scraped episode set, the teaching-pearls layer was added, a model-assisted pearl→evidence linking layer was added, a full-episode transcript corpus was harvested, a visitor-feedback layer and a research-screening pass were added, and the site dataset was rebuilt.
 
 - `555` episodes marked completed in [data/extraction_state.json](data/extraction_state.json)
 - `0` failed episodes
@@ -31,13 +31,15 @@ As of July 4, 2026, the extraction pipeline has been run across the full scraped
 - `6225` canonical trial records in [docs/data/trials.json](docs/data/trials.json)
 - `533` episodes with at least one extracted literature mention
 - `5903` canonical records with an outbound literature link
-- `1287` episode-level teaching pearls in [data/pearls.json](data/pearls.json) across `254` of `555` episodes; the remaining `301` episodes have no recognizable show-note `Pearls` section (see [pearl coverage](#pearl-coverage-gap) — `236` of those have a transcript and are feedable to the candidate-pearl generator)
+- `1896` episode-level teaching pearls in [data/pearls.json](data/pearls.json) across `336` of `555` episodes; the remaining `219` episodes have no recognizable show-note `Pearls` section (see [pearl coverage](#pearl-coverage-gap) — `171` of those have a transcript and are feedable to the candidate-pearl generator)
 - `845` pearls have model-drafted `evidence_links` (`1537` links across `227` episodes) in [data/pearl_evidence_links.json](data/pearl_evidence_links.json). Of those, `398` records have been reviewed and signed off (every link high-confidence/direct-support with a clinician-recognizable citation, spot-checked) and are applied onto [data/pearls_linked.json](data/pearls_linked.json); the remaining `447` are still `pending` and withheld from the site until a reviewer adjudicates them (see [Adjudication loop](#adjudication-loop))
 - `448` full-episode transcripts in `data/transcripts.json` (untracked, local-only — see note below): `94` official (human/CME-reviewed) and `354` YouTube auto-captions filling the gaps (`ai_generated`)
 
 The missing `22` episodes are currently zero-trial episodes, not ingestion failures.
 
-The transcript corpus and the owner-gated candidate-pearl pass are a context/search layer, deliberately kept out of the auto-published verbatim pearl path (see below). `data/candidate_pearls.json` currently holds a small seeded batch (`13` quote-verified candidates from one episode) as a worked example; nothing has been promoted into `data/approved_pearls.json` yet.
+The transcript corpus and the owner-gated candidate-pearl pass are a context/search layer, deliberately kept out of the auto-published verbatim pearl path (see below). `data/candidate_pearls.json` currently holds `3016` quote-verified candidates (drafted via the Batch API, see [Candidate pearls from transcripts](#candidate-pearls-from-transcripts)), all still `pending` review; nothing has been promoted into `data/approved_pearls.json` yet.
+
+The research-screening pass (`scripts/screen_trials.py`, see [Research screening](#research-screening-owner-gated)) and the visitor-feedback layer (`worker/` + `scripts/import_feedback.py`, see [Visitor feedback](#visitor-feedback-owner-gated)) have both shipped but have no generated/collected data yet — both are opt-in, run-it-yourself passes.
 
 ## Data artifacts
 
@@ -49,6 +51,12 @@ The transcript corpus and the owner-gated candidate-pearl pass are a context/sea
 
 - [data/candidate_pearls.json](data/candidate_pearls.json) / `data/approved_pearls.json`
   Model-drafted teaching pearls from transcripts (candidate_pearls), each with a `supporting_quote` verified verbatim against the transcript and a `review_status`. A human sets `review_status: "approved"` and runs the `promote` step to copy those into approved_pearls; nothing here is ever written into `data/pearls.json`. `approved_pearls.json` doesn't exist yet — nothing has been promoted so far. See the owner-gated pass below.
+
+- `data/candidate_pearls_batch.json`
+  Bookkeeping for an in-flight or most-recently-collected Batch API submission from `generate_candidate_pearls.py submit-batch` (batch ID, model, per-episode `custom_id` map, a fingerprint used to sanity-check `collect`). Safe to commit — no secrets, just a job reference.
+
+- [data/trial_screening.json](data/trial_screening.json) / `data/trial_screening_approved.json`
+  Owner-gated PICO + quality-signal screening for cited trials (`scripts/screen_trials.py`), grounded in the real PubMed abstract when one resolves (`grounded_in: "pubmed_abstract"`) and falling back to a more conservative summary of the show notes' own gloss otherwise (`"show_notes_only"`). `apply` copies `review_status: "approved"` records into `trial_screening_approved.json`, the only file `build_site.py` reads for this pass. Neither file exists yet — no screening has been generated so far.
 
 - [data/extraction_state.json](data/extraction_state.json)
   Per-episode processing manifest with completion state, chunk counts, and errors.
@@ -74,6 +82,9 @@ The transcript corpus and the owner-gated candidate-pearl pass are a context/sea
 - `data/batches/`
   Optional local OpenAI Batch API inputs and outputs. These are ignored for sharing because they can contain request payloads, provider object IDs, and machine-specific paths.
 
+- [data/pearl_feedback.json](data/pearl_feedback.json) / [data/pearl_feedback_approved.json](data/pearl_feedback_approved.json)
+  Visitor-submitted feedback on pearls and pearl→evidence links (owner-gated). The sidecar (`pearl_feedback`) holds every imported row (reason code, optional comment, per-row `review_status`); `apply` aggregates only `"approved"` rows into per-pearl (and per-pearl-link) flag counts in `pearl_feedback_approved.json`, the only feedback artifact `build_site.py` reads. See the visitor feedback section below.
+
 ## Pipeline
 
 1. `python scripts/scrape_episodes.py`
@@ -84,7 +95,7 @@ The transcript corpus and the owner-gated candidate-pearl pass are a context/sea
 
    Downloads the official transcript file linked by each episode's show notes, extracts its text, and writes `data/transcripts.json` (local-only, untracked). Resumable (skips already-fetched) and spends no model tokens. `--report` prints coverage; `--refresh` re-fetches everything.
 
-   Optional gap-fill: `python scripts/harvest_youtube_captions.py` matches episodes without an official transcript to the show's YouTube videos (by episode number in the title) and stores the auto-captions as `source: "youtube"`. Needs `yt-dlp`; spends no model tokens; tagged `ai_generated` since captions are ASR.
+   Gap-fill: `python scripts/harvest_youtube_captions.py` matches episodes without an official transcript to the show's YouTube videos (by episode number in the title) and stores the auto-captions as `source: "youtube"`. Needs `yt-dlp`; spends no model tokens; tagged `ai_generated` since captions are ASR. `scripts/ingest.py` now runs this automatically as phase 2b (after scraping, before extraction) unless `--skip-youtube-transcripts` is passed.
 
 3. `python scripts/extract_trials.py --backend openai --workers 8`
 
@@ -117,17 +128,34 @@ risk the project is built to avoid, it is deliberately fenced:
   can't smuggle in a claim, because its evidence is checkable.
 - Nothing is published until a human sets `review_status: "approved"` and runs `promote`.
 - It is **not** part of `ingest.py` — it spends tokens and is run deliberately.
+- Only episodes with **zero** deterministic show-notes pearls are ever eligible (per
+  `pearl_coverage.compute_pearl_gap`), even with `--refresh` — an episode that already
+  has real pearls is never sent through this path.
 
 ```bash
 python scripts/generate_candidate_pearls.py generate --episode 347   # one episode
 python scripts/generate_candidate_pearls.py generate --limit 5       # first 5 eligible
+python scripts/generate_candidate_pearls.py submit-batch             # same pool, Batch API (50% cheaper)
+python scripts/generate_candidate_pearls.py collect --wait           # retrieve batch results
 python scripts/generate_candidate_pearls.py report                   # counts + review status
 # (review data/candidate_pearls.json, set review_status: "approved" on the good ones)
 python scripts/generate_candidate_pearls.py promote                  # -> data/approved_pearls.json
+python scripts/merge_approved_pearls.py                              # -> merges into data/pearls.json
+python scripts/build_site.py
 ```
 
 Defaults to `claude-opus-4-8` (override with `--model`) and to the high-fidelity
 official transcripts only (`--source`/`--include-ai` to widen). Requires `ANTHROPIC_API_KEY`.
+
+`promote` only writes `data/approved_pearls.json`; nothing downstream reads that file
+by default. `scripts/merge_approved_pearls.py` is the missing link — it maps each
+approved candidate into the same record shape `extract_pearls.py` produces (running it
+through the same deterministic linking/segment/category pipeline) and merges it into
+`data/pearls.json`, deduped against the episode's existing show-notes pearls so a
+candidate never shadows a real one. It is deliberately **not** part of `ingest.py`: a
+plain `ingest.py`/`extract_pearls.py` run regenerates `pearls.json` from show notes only
+and would silently drop any merged-in candidates — re-run `merge_approved_pearls.py`
+after each such rebuild, then `build_site.py` again.
 
 ## Model-assisted pearl→evidence linking (owner-gated)
 
@@ -186,6 +214,80 @@ python scripts/pearl_coverage.py    # print the summary + list, write data/pearl
 
 The same gap count also appears in `python scripts/ingest.py --report`.
 
+## Research screening (owner-gated)
+
+`scripts/trial_detail_utils.py` deliberately defers PICO (population / intervention /
+comparator / outcome) extraction to "a future model-backed pass," to avoid inventing
+clinical detail the show notes never stated. `scripts/screen_trials.py` is that pass,
+fenced the same way as every other model-touching step in this repo:
+
+- **Grounded where possible.** When a citation resolves to a PubMed ID
+  (`scripts/pubmed_utils.resolve_pmid`), the model is given the real fetched abstract
+  (via NCBI's free E-utilities API, no key required) and asked to summarize only that
+  text. When no PMID resolves, it falls back to the podcast's own show-notes gloss and
+  is explicitly told to be more conservative — every record carries a `grounded_in`
+  flag (`"pubmed_abstract"` | `"show_notes_only"`) so the site can show which is which.
+- **Null discipline.** The prompt requires `null` (not a guess) for any PICO field the
+  source text doesn't state — no filling in what a study "probably" found.
+- **Owner-gated.** Output goes to `data/trial_screening.json` with
+  `review_status: "pending"`. It never writes `docs/data/trials.json` directly.
+  Not part of `ingest.py` — it spends tokens and makes external network calls to NCBI.
+
+```bash
+python scripts/screen_trials.py generate --limit 5             # first 5 eligible trials
+python scripts/screen_trials.py generate --source pubmed       # skip un-groundable trials
+python scripts/screen_trials.py report                          # counts + review status
+python scripts/screen_trials.py adjudicate --trial "SPRINT" --approve
+python scripts/screen_trials.py apply                            # -> data/trial_screening_approved.json
+python scripts/build_site.py                                    # publish PICO/quality fields
+```
+
+Defaults to `claude-opus-4-8` (override with `--model`). Requires `ANTHROPIC_API_KEY`.
+
+## Visitor feedback (owner-gated)
+
+The site is static with no backend of its own, so visitor feedback is collected by a
+small self-hosted Cloudflare Worker + D1 database (`worker/`) rather than a
+third-party form service — this keeps submitted data under your control instead of
+a SaaS relay's. Visitors can flag a pearl or a specific pearl→trial evidence link
+with a structured reason code (inaccurate / outdated / wrong citation / unclear /
+other) plus an optional comment — no name/email is collected, and the caller's IP
+is only hashed transiently for rate-limiting, never stored raw.
+
+**One-time setup** (you need a free Cloudflare account):
+
+```bash
+cd worker
+npx wrangler login
+npx wrangler d1 create curbsiders-feedback   # copy the returned database_id into wrangler.toml
+npx wrangler d1 execute curbsiders-feedback --file=schema.sql
+npx wrangler secret put ADMIN_TOKEN          # a long random string; also goes in .env below
+npx wrangler secret put IP_HASH_SALT         # another random string
+npx wrangler deploy
+```
+
+Then:
+- Put the deployed Worker's URL into `docs/app.js`'s `FEEDBACK_ENDPOINT` constant.
+- Put `FEEDBACK_WORKER_URL` (the Worker's base URL) and `CLOUDFLARE_FEEDBACK_ADMIN_TOKEN`
+  (the same value as `ADMIN_TOKEN` above) into `.env`.
+- Update `worker/wrangler.toml`'s `ALLOWED_ORIGIN` to your actual GitHub Pages URL.
+
+Just like the model-assisted passes, nothing a visitor submits reaches the site
+directly — it goes through the same sidecar → adjudicate → apply gate:
+
+```bash
+python scripts/import_feedback.py fetch                          # pull new rows from the Worker
+python scripts/import_feedback.py report                         # counts by status/reason
+python scripts/import_feedback.py adjudicate --id 42 --approve
+python scripts/import_feedback.py adjudicate --pearl "SPRINT" --reject --note "not applicable, off-topic flag"
+python scripts/import_feedback.py apply                           # -> data/pearl_feedback_approved.json
+python scripts/build_site.py                                      # publish updated flag badges
+```
+
+`fetch` is cursor-tracked (`data/feedback_import_state.json`) and never deletes or
+re-imports rows from D1, so it's safe to run repeatedly. Not part of `ingest.py` —
+it's an external network call and needs credentials.
+
 ## Incremental ingest (recommended for new episodes)
 
 Instead of running the steps above by hand, use the orchestrator, which does model
@@ -193,10 +295,11 @@ work only on episodes that are new since the last run and then rebuilds the
 deterministic layers (pearls + site) and validates:
 
 ```bash
-python scripts/ingest.py                 # scrape → extract new → pearls → site → validate
-python scripts/ingest.py --dry-run       # report which episodes are new, change nothing
-python scripts/ingest.py --skip-scrape   # reuse the current episodes.json
-python scripts/ingest.py --backend batch # extract new episodes via the OpenAI Batch API
+python scripts/ingest.py                            # scrape → youtube gap-fill → extract new → pearls → site → validate
+python scripts/ingest.py --dry-run                  # report which episodes are new, change nothing
+python scripts/ingest.py --skip-scrape               # reuse the current episodes.json
+python scripts/ingest.py --skip-youtube-transcripts  # don't fill transcript gaps from YouTube captions
+python scripts/ingest.py --backend batch             # extract new episodes via the OpenAI Batch API
 ```
 
 Because Curbsiders publishes roughly weekly, each incremental run typically

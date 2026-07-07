@@ -110,6 +110,7 @@ def build_episode_pearls(episodes: list[dict], trials: list[dict]) -> list[dict]
             pearl["episode_title"] = episode.get("title", "")
             pearl["episode_url"] = url
             pearl["episode_date"] = episode.get("date", "")
+            pearl["pearl_source"] = "show_notes"
         all_pearls.extend(pearls)
 
     return all_pearls

@@ -1,0 +1,24 @@
+name = "curbsiders-feedback"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# The GitHub Pages origin allowed to POST/OPTIONS from the browser. Update this
+# once Pages is enabled (see README's "Publishing (GitHub Pages)" section) --
+# e.g. "https://kramesh1.github.io".
+[vars]
+ALLOWED_ORIGIN = "https://kramesh1.github.io"
+
+# Created with: wrangler d1 create curbsiders-feedback
+# Then paste the returned database_id below and run:
+#   wrangler d1 execute curbsiders-feedback --file=schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "curbsiders-feedback"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# Secrets are NOT set here (this file is committed to git). Set them with:
+#   wrangler secret put ADMIN_TOKEN
+#   wrangler secret put IP_HASH_SALT
+# ADMIN_TOKEN gates the GET /feedback export endpoint used by
+# scripts/import_feedback.py. IP_HASH_SALT is mixed into the per-IP rate-limit
+# hash so raw IPs are never stored.

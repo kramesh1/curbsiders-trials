@@ -15,6 +15,9 @@ pass is deliberately fenced:
   3. Nothing is published until a human sets review_status="approved" and runs the
      `promote` step. That is the owner gate.
   4. It is not part of ingest.py — it spends tokens and must be run deliberately.
+  5. Only episodes with zero deterministic pearls (per pearl_coverage.compute_pearl_gap)
+     are ever eligible, even with --refresh -- an episode with real show-notes pearls
+     is never sent through this path.
 
 By default it only reads high-fidelity official (human/CME-reviewed) transcripts and
 skips AI-generated ones (see the ai_generated flag), since ASR text is a poor source
@@ -24,6 +27,8 @@ Usage:
   python scripts/generate_candidate_pearls.py generate --episode 347   # one episode
   python scripts/generate_candidate_pearls.py generate --limit 5       # first 5 eligible
   python scripts/generate_candidate_pearls.py generate                 # all eligible (spends tokens!)
+  python scripts/generate_candidate_pearls.py submit-batch              # same pool, Batch API (50% cheaper)
+  python scripts/generate_candidate_pearls.py collect --wait            # retrieve batch results
   python scripts/generate_candidate_pearls.py report                   # counts + review status
   python scripts/generate_candidate_pearls.py promote                  # approved -> approved_pearls.json
 
@@ -33,19 +38,26 @@ Model defaults to claude-opus-4-8; override with --model. Requires ANTHROPIC_API
 import argparse
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 try:
     from scripts.extract_trials import DATA_DIR, load_json, save_json, parse_json_response
     from scripts.fetch_transcripts import TRANSCRIPTS_FILE
+    from scripts.extract_pearls import EPISODES_FILE, PEARLS_FILE
+    from scripts.pearl_coverage import compute_pearl_gap
 except ImportError:
     from extract_trials import DATA_DIR, load_json, save_json, parse_json_response
     from fetch_transcripts import TRANSCRIPTS_FILE
+    from extract_pearls import EPISODES_FILE, PEARLS_FILE
+    from pearl_coverage import compute_pearl_gap
 
 CANDIDATES_FILE = DATA_DIR / "candidate_pearls.json"
 APPROVED_FILE = DATA_DIR / "approved_pearls.json"
+BATCH_JOB_FILE = DATA_DIR / "candidate_pearls_batch.json"
 DEFAULT_MODEL = "claude-opus-4-8"
+MAX_TOKENS = 8000
 MIN_QUOTE_CHARS = 15  # a verifiable quote has to be substantial
 
 SYSTEM_PROMPT = """\
@@ -101,24 +113,20 @@ def eligible_transcripts(transcripts: list[dict], *, include_ai: bool, source: s
     return sorted(rows, key=lambda r: -(r.get("episode_number") or 0))
 
 
-def generate_for_transcript(client, model: str, transcript: dict) -> list[dict]:
-    text = transcript["text"]
-    message = client.messages.create(
-        model=model,
-        max_tokens=8000,
-        system=SYSTEM_PROMPT,
-        messages=[{
-            "role": "user",
-            "content": (
-                f"Episode #{transcript.get('episode_number')}: {transcript.get('title','')}\n\n"
-                f"Transcript:\n{text}"
-            ),
-        }],
+def build_transcript_prompt(transcript: dict) -> str:
+    return (
+        f"Episode #{transcript.get('episode_number')}: {transcript.get('title','')}\n\n"
+        f"Transcript:\n{transcript['text']}"
     )
-    raw = next((b.text for b in message.content if b.type == "text"), "")
+
+
+def build_candidate_records(raw: str, transcript: dict, model: str, generated_at: str) -> list[dict]:
+    """Turn one model response into candidate-pearl records. Shared by the
+    synchronous and batch paths, so both produce identical output."""
     # parse_json_response tolerates code fences and returns the list inside a
     # {"pearls": [...]} wrapper object.
     pearls = parse_json_response(raw)
+    text = transcript["text"]
 
     records = []
     for p in pearls:
@@ -135,9 +143,50 @@ def generate_for_transcript(client, model: str, transcript: dict) -> list[dict]:
             "quote_verified": quote_is_verbatim(quote, text),
             "review_status": "pending",
             "generated_by": model,
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "generated_at": generated_at,
         })
     return records
+
+
+def generate_for_transcript(client, model: str, transcript: dict) -> list[dict]:
+    message = client.messages.create(
+        model=model,
+        max_tokens=MAX_TOKENS,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": build_transcript_prompt(transcript)}],
+    )
+    raw = next((b.text for b in message.content if b.type == "text"), "")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return build_candidate_records(raw, transcript, model, now)
+
+
+def restrict_to_pearl_gap(pool: list[dict], episodes: list[dict], pearls: list[dict], transcripts: list[dict]) -> list[dict]:
+    """Drop any transcript whose episode already has deterministic show-notes pearls.
+
+    Never overridable by --refresh: --refresh means "redo candidates for a gap
+    episode," not "reach into an episode that already has real pearls."
+    """
+    gap_urls = {g["episode_url"] for g in compute_pearl_gap(episodes, pearls, transcripts)}
+    return [t for t in pool if t["episode_url"] in gap_urls]
+
+
+def build_pool(args, transcripts: list[dict]) -> list[dict]:
+    """Shared eligible-transcript-pool logic for the sync and batch commands."""
+    pool = eligible_transcripts(transcripts, include_ai=args.include_ai, source=args.source)
+    episodes = load_json(EPISODES_FILE, [])
+    pearls = load_json(PEARLS_FILE, [])
+    pool = restrict_to_pearl_gap(pool, episodes, pearls, transcripts)
+
+    if args.episode is not None:
+        pool = [t for t in pool if t.get("episode_number") == args.episode]
+
+    existing = load_json(CANDIDATES_FILE, [])
+    done_urls = {c["episode_url"] for c in existing}
+    if not args.refresh:
+        pool = [t for t in pool if t["episode_url"] not in done_urls]
+    if args.limit is not None:
+        pool = pool[: args.limit]
+    return pool
 
 
 def cmd_generate(args) -> int:
@@ -146,20 +195,10 @@ def cmd_generate(args) -> int:
         print(f"No transcripts in {TRANSCRIPTS_FILE}. Run fetch_transcripts.py first.")
         return 1
 
-    pool = eligible_transcripts(transcripts, include_ai=args.include_ai, source=args.source)
-    if args.episode is not None:
-        pool = [t for t in pool if t.get("episode_number") == args.episode]
-        if not pool:
-            print(f"No eligible transcript for episode #{args.episode}.")
-            return 1
-
-    # Don't regenerate episodes we already have candidates for (unless --refresh).
-    existing = load_json(CANDIDATES_FILE, [])
-    done_urls = {c["episode_url"] for c in existing}
-    if not args.refresh:
-        pool = [t for t in pool if t["episode_url"] not in done_urls]
-    if args.limit is not None:
-        pool = pool[: args.limit]
+    pool = build_pool(args, transcripts)
+    if args.episode is not None and not pool:
+        print(f"No eligible transcript for episode #{args.episode}.")
+        return 1
 
     if not pool:
         print("Nothing to generate (all eligible transcripts already have candidates).")
@@ -176,6 +215,7 @@ def cmd_generate(args) -> int:
     print("This spends tokens and is owner-gated — nothing is published to pearls.json.\n")
 
     # Keep candidates for episodes not in this run; replace those we regenerate.
+    existing = load_json(CANDIDATES_FILE, [])
     regenerated_urls = {t["episode_url"] for t in pool}
     kept = [c for c in existing if c["episode_url"] not in regenerated_urls]
     added = 0
@@ -198,6 +238,168 @@ def cmd_generate(args) -> int:
         save_json(CANDIDATES_FILE, kept)
 
     print(f"\nDone. {added} candidate pearls written to {CANDIDATES_FILE}.")
+    if dropped_unverified and not args.keep_unverified:
+        print(f"Dropped {dropped_unverified} candidate(s) whose quote wasn't verbatim in the transcript.")
+    print("Review them (set review_status to \"approved\"), then run: "
+          "python scripts/generate_candidate_pearls.py promote")
+    return 0
+
+
+def build_batch_requests(pool: list[dict], model: str) -> tuple[list[dict], dict]:
+    """One Messages-API request per transcript, plus a custom_id -> episode_url map.
+
+    custom_id is a short index (batch custom_ids are length-limited); the map lets
+    `collect` re-attach each result to its episode. The prompt is built exactly as
+    in the synchronous path, so batch and sync produce identical candidates.
+    """
+    requests = []
+    custom_map: dict[str, str] = {}
+    for i, transcript in enumerate(pool):
+        custom_id = f"ep-{i:04d}"
+        requests.append({
+            "custom_id": custom_id,
+            "params": {
+                "model": model,
+                "max_tokens": MAX_TOKENS,
+                "system": SYSTEM_PROMPT,
+                "messages": [{"role": "user", "content": build_transcript_prompt(transcript)}],
+            },
+        })
+        custom_map[custom_id] = transcript["episode_url"]
+    return requests, custom_map
+
+
+def cmd_submit_batch(args) -> int:
+    transcripts = load_json(TRANSCRIPTS_FILE, [])
+    if not transcripts:
+        print(f"No transcripts in {TRANSCRIPTS_FILE}. Run fetch_transcripts.py first.")
+        return 1
+
+    pool = build_pool(args, transcripts)
+    if not pool:
+        print("Nothing to submit (all eligible transcripts already have candidates).")
+        return 0
+
+    requests, custom_map = build_batch_requests(pool, args.model)
+
+    try:
+        import anthropic
+    except ImportError:
+        print("Error: the anthropic package is required (pip install anthropic).")
+        return 1
+    client = anthropic.Anthropic()
+
+    print(f"Submitting a batch of {len(requests)} episode(s) at 50% Batch-API pricing with {args.model}.")
+    batch = client.messages.batches.create(requests=requests)
+
+    job = {
+        "batch_id": batch.id,
+        "model": args.model,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "custom_map": custom_map,
+        # Sanity check for collect: only valid if transcripts.json/pearls.json
+        # haven't changed between submit and collect.
+        "fingerprint": {"transcripts": len(transcripts)},
+    }
+    save_json(BATCH_JOB_FILE, job)
+
+    print(f"  batch id:          {batch.id}")
+    print(f"  processing status: {batch.processing_status}")
+    print(f"  job saved to:      {BATCH_JOB_FILE}")
+    print("\nCollect results when the batch ends (usually <1h) with:")
+    print("  python scripts/generate_candidate_pearls.py collect --wait")
+    return 0
+
+
+def _print_batch_status(batch) -> None:
+    counts = getattr(batch, "request_counts", None)
+    detail = ""
+    if counts is not None:
+        detail = (f"  (processing {getattr(counts, 'processing', 0)}, "
+                  f"succeeded {getattr(counts, 'succeeded', 0)}, "
+                  f"errored {getattr(counts, 'errored', 0)})")
+    print(f"batch {batch.id}: {batch.processing_status}{detail}")
+
+
+def cmd_collect(args) -> int:
+    job = load_json(BATCH_JOB_FILE, None)
+    if not job:
+        print(f"No batch job found ({BATCH_JOB_FILE}). Run `submit-batch` first.")
+        return 1
+
+    try:
+        import anthropic
+    except ImportError:
+        print("Error: the anthropic package is required (pip install anthropic).")
+        return 1
+    client = anthropic.Anthropic()
+    batch_id = job["batch_id"]
+
+    deadline = time.time() + args.max_wait_minutes * 60
+    while True:
+        try:
+            batch = client.messages.batches.retrieve(batch_id)
+        except anthropic.APIConnectionError as error:
+            if not args.wait or time.time() >= deadline:
+                print(f"Connection error retrieving batch and not retrying: {error}")
+                return 1
+            print(f"  (transient connection error, retrying in {args.poll_interval}s: {error})")
+            time.sleep(args.poll_interval)
+            continue
+        _print_batch_status(batch)
+        if batch.processing_status == "ended":
+            break
+        if not args.wait:
+            print("Not ended yet. Re-run later, or pass --wait to poll until it finishes.")
+            return 0
+        if time.time() >= deadline:
+            print(f"Still not ended after {args.max_wait_minutes} min. Re-run `collect` later.")
+            return 1
+        time.sleep(args.poll_interval)
+
+    transcripts = load_json(TRANSCRIPTS_FILE, [])
+    fingerprint = job.get("fingerprint") or {}
+    if fingerprint and fingerprint.get("transcripts") != len(transcripts):
+        print("WARNING: transcripts.json changed since submit; episode mapping may be off. "
+              "Consider re-submitting rather than trusting these results.")
+
+    transcripts_by_url = {t["episode_url"]: t for t in transcripts if t.get("episode_url")}
+    custom_map = job["custom_map"]
+    model = job.get("model")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    batch_urls = set(custom_map.values())
+    existing = load_json(CANDIDATES_FILE, [])
+    kept = [c for c in existing if c["episode_url"] not in batch_urls]
+
+    added = 0
+    episodes_ok = 0
+    errored = 0
+    dropped_unverified = 0
+    for result in client.messages.batches.results(batch_id):
+        url = custom_map.get(result.custom_id)
+        transcript = transcripts_by_url.get(url)
+        if url is None or transcript is None:
+            continue
+        if result.result.type != "succeeded":
+            errored += 1
+            print(f"  {result.custom_id} ({result.result.type}): skipped")
+            continue
+        message = result.result.message
+        raw = next((b.text for b in message.content if b.type == "text"), "")
+        records = build_candidate_records(raw, transcript, model, now)
+        verified = [r for r in records if r["quote_verified"]]
+        dropped = len(records) - len(verified)
+        dropped_unverified += dropped
+        emit = records if args.keep_unverified else verified
+        kept.extend(emit)
+        added += len(emit)
+        episodes_ok += 1
+
+    save_json(CANDIDATES_FILE, kept)
+    print(f"\nDone. {episodes_ok} episode(s) processed, {added} candidate pearls written to {CANDIDATES_FILE}.")
+    if errored:
+        print(f"{errored} request(s) errored and were skipped.")
     if dropped_unverified and not args.keep_unverified:
         print(f"Dropped {dropped_unverified} candidate(s) whose quote wasn't verbatim in the transcript.")
     print("Review them (set review_status to \"approved\"), then run: "
@@ -259,6 +461,24 @@ def main() -> int:
                    help="Keep candidates whose quote isn't verbatim (default drops them)")
     g.add_argument("--refresh", action="store_true", help="Regenerate episodes that already have candidates")
     g.set_defaults(func=cmd_generate)
+
+    s = sub.add_parser("submit-batch", help="Submit the same eligible pool via the Batch API (50% cheaper)")
+    s.add_argument("--model", default=DEFAULT_MODEL, help="Anthropic model (default claude-opus-4-8)")
+    s.add_argument("--episode", type=int, default=None, help="Only this episode number")
+    s.add_argument("--limit", type=int, default=None, help="At most N eligible episodes")
+    s.add_argument("--source", choices=["official", "youtube", "all"], default="official",
+                   help="Which transcript source to read (default official, highest fidelity)")
+    s.add_argument("--include-ai", action="store_true", help="Also use AI-generated transcripts (risky)")
+    s.add_argument("--refresh", action="store_true", help="Include episodes that already have candidates")
+    s.set_defaults(func=cmd_submit_batch)
+
+    c = sub.add_parser("collect", help="Retrieve batch results and write them to candidate_pearls.json")
+    c.add_argument("--wait", action="store_true", help="Poll until the batch ends instead of reporting once")
+    c.add_argument("--poll-interval", type=int, default=60, help="Seconds between polls when --wait")
+    c.add_argument("--max-wait-minutes", type=int, default=120, help="Give up waiting after this many minutes")
+    c.add_argument("--keep-unverified", action="store_true",
+                   help="Keep candidates whose quote isn't verbatim (default drops them)")
+    c.set_defaults(func=cmd_collect)
 
     r = sub.add_parser("report", help="Print candidate counts and review status")
     r.set_defaults(func=cmd_report)

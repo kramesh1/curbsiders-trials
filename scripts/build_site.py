@@ -11,16 +11,20 @@ from pathlib import Path
 
 try:
     from scripts.trial_utils import build_canonical_trial_records
-    from scripts.pearl_utils import attach_evidence_links, build_canonical_pearls
+    from scripts.pearl_utils import attach_evidence_links, attach_feedback, build_canonical_pearls
+    from scripts.pubmed_utils import attach_screening
 except ImportError:
     from trial_utils import build_canonical_trial_records
-    from pearl_utils import attach_evidence_links, build_canonical_pearls
+    from pearl_utils import attach_evidence_links, attach_feedback, build_canonical_pearls
+    from pubmed_utils import attach_screening
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 DOCS_DATA_DIR = Path(__file__).parent.parent / "docs" / "data"
 TRIALS_FILE = DATA_DIR / "trials.json"
 PEARLS_FILE = DATA_DIR / "pearls.json"
 LINKED_PEARLS_FILE = DATA_DIR / "pearls_linked.json"
+SCREENING_APPROVED_FILE = DATA_DIR / "trial_screening_approved.json"
+FEEDBACK_APPROVED_FILE = DATA_DIR / "pearl_feedback_approved.json"
 OUTPUT_FILE = DOCS_DATA_DIR / "trials.json"
 PEARLS_OUTPUT_FILE = DOCS_DATA_DIR / "pearls.json"
 
@@ -36,6 +40,13 @@ def main():
 
     canonical = build_canonical_trial_records(trials)
     print(f"After canonicalization: {len(canonical)} unique trial records")
+
+    screened_count = 0
+    if SCREENING_APPROVED_FILE.exists():
+        with open(SCREENING_APPROVED_FILE) as f:
+            screening_records = json.load(f)
+        canonical = attach_screening(canonical, screening_records)
+        screened_count = sum(1 for trial in canonical if trial.get("grounded_in"))
 
     DOCS_DATA_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_FILE, "w") as f:
@@ -60,6 +71,7 @@ def main():
     print(f"  Episodes covered: {len(episodes)}")
     print(f"  Top specialties: {specialty_counts.most_common(8)}")
     print(f"  Study types:     {dict(study_type_counts.most_common())}")
+    print(f"  Trials with research screening: {screened_count}")
 
     build_pearls_site()
 
@@ -83,6 +95,14 @@ def build_pearls_site():
         pearls = attach_evidence_links(pearls, linked_records)
 
     canonical_pearls = build_canonical_pearls(pearls)
+
+    flagged_count = 0
+    if FEEDBACK_APPROVED_FILE.exists():
+        with open(FEEDBACK_APPROVED_FILE) as f:
+            approved_feedback = json.load(f)
+        canonical_pearls = attach_feedback(canonical_pearls, approved_feedback)
+        flagged_count = sum(1 for pearl in canonical_pearls if pearl.get("flag_summary"))
+
     with open(PEARLS_OUTPUT_FILE, "w") as f:
         json.dump(canonical_pearls, f, ensure_ascii=False, separators=(",", ":"))
 
@@ -93,6 +113,7 @@ def build_pearls_site():
     print(f"  Canonical pearls:           {len(canonical_pearls)}")
     print(f"  Pearls with a citation:     {with_citation}")
     print(f"  Pearls with model evidence: {with_model_evidence}")
+    print(f"  Pearls with visitor flags:  {flagged_count}")
 
 
 if __name__ == "__main__":
