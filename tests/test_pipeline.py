@@ -1245,6 +1245,81 @@ class PubmedUtilsTests(unittest.TestCase):
         from scripts.pubmed_utils import parse_efetch_response
         self.assertIsNone(parse_efetch_response(b"not xml at all <<<", pmid="1"))
 
+    def test_parse_elink_response_uses_pubmed_pmc_not_refs(self):
+        # Regression test: elink returns several dbto="pmc" linksetdbs. Only
+        # "pubmed_pmc" is the PMID's own PMC deposit -- "pubmed_pmc_refs" is a
+        # list of OTHER articles that cite it and must never be mistaken for
+        # this paper's own full text.
+        from scripts.pubmed_utils import parse_elink_response
+        raw = json.dumps({
+            "linksets": [{
+                "dbfrom": "pubmed",
+                "ids": ["9099655"],
+                "linksetdbs": [
+                    {"dbto": "pmc", "linkname": "pubmed_pmc_refs", "links": ["13331418", "13329582"]},
+                    {"dbto": "pmc", "linkname": "pubmed_pmc", "links": ["11450898"]},
+                ],
+            }],
+        }).encode()
+        self.assertEqual(parse_elink_response(raw), "PMC11450898")
+
+    def test_parse_elink_response_returns_none_when_only_refs_present(self):
+        # A pre-PMC-era paper has no "pubmed_pmc" linkset of its own, only
+        # "pubmed_pmc_refs" (articles citing it) -- must not fall back to those.
+        from scripts.pubmed_utils import parse_elink_response
+        raw = json.dumps({
+            "linksets": [{
+                "dbfrom": "pubmed",
+                "ids": ["9099655"],
+                "linksetdbs": [
+                    {"dbto": "pmc", "linkname": "pubmed_pmc_refs", "links": ["13331418"]},
+                ],
+            }],
+        }).encode()
+        self.assertIsNone(parse_elink_response(raw))
+
+    def test_parse_elink_response_returns_none_for_malformed_json(self):
+        from scripts.pubmed_utils import parse_elink_response
+        self.assertIsNone(parse_elink_response(b"not json"))
+
+    SAMPLE_PMC_XML = b"""<?xml version="1.0"?>
+<pmc-articleset>
+  <article>
+    <body>
+      <sec>
+        <title>Methods</title>
+        <p>We randomly assigned participants to intensive or standard treatment.</p>
+      </sec>
+      <sec>
+        <title>Results</title>
+        <p>The intensive-treatment group had a significantly lower rate of the primary outcome.</p>
+      </sec>
+      <ref-list>
+        <ref><p>Some citation that should never appear in the extracted text.</p></ref>
+      </ref-list>
+    </body>
+  </article>
+</pmc-articleset>
+"""
+
+    def test_parse_pmc_fulltext_extracts_body_and_skips_references(self):
+        from scripts.pubmed_utils import parse_pmc_fulltext
+        text = parse_pmc_fulltext(self.SAMPLE_PMC_XML)
+        self.assertIn("intensive or standard treatment", text)
+        self.assertIn("primary outcome", text)
+        self.assertNotIn("should never appear", text)
+
+    def test_parse_pmc_fulltext_returns_none_without_body(self):
+        from scripts.pubmed_utils import parse_pmc_fulltext
+        self.assertIsNone(parse_pmc_fulltext(b"<pmc-articleset><article/></pmc-articleset>"))
+
+    def test_parse_pmc_fulltext_caps_length(self):
+        from scripts.pubmed_utils import parse_pmc_fulltext
+        long_p = "x" * 100000
+        raw = f"<a><body><p>{long_p}</p></body></a>".encode()
+        text = parse_pmc_fulltext(raw, max_chars=100)
+        self.assertEqual(len(text), 100)
+
 
 class ScreenTrialsTests(unittest.TestCase):
     def test_grounded_prompt_uses_abstract_and_flags_pubmed_abstract(self):
@@ -1257,9 +1332,28 @@ class ScreenTrialsTests(unittest.TestCase):
             "year": 2015,
             "publication_types": ["Randomized Controlled Trial"],
         }
-        content, grounded_in = build_screening_prompt(trial, abstract)
+        content, grounded_in = build_screening_prompt(trial, abstract, None)
         self.assertEqual(grounded_in, "pubmed_abstract")
         self.assertIn("BACKGROUND", content)
+        self.assertIn("NEJM", content)
+
+    def test_fulltext_prompt_prefers_pmc_over_abstract_and_flags_pmc_fulltext(self):
+        from scripts.screen_trials import build_screening_prompt
+        trial = {"canonical_key": "x", "citation_label": "SPRINT 2015"}
+        abstract = {
+            "title": "A Randomized Trial of Intensive versus Standard Blood-Pressure Control.",
+            "abstract": "BACKGROUND: ... RESULTS: ...",
+            "journal": "NEJM",
+            "year": 2015,
+            "publication_types": ["Randomized Controlled Trial"],
+        }
+        fulltext = "METHODS: We randomly assigned participants... RESULTS: the intensive-treatment group had a lower rate."
+        content, grounded_in = build_screening_prompt(trial, abstract, fulltext)
+        self.assertEqual(grounded_in, "pmc_fulltext")
+        self.assertIn("Full text", content)
+        self.assertIn("intensive-treatment group", content)
+        # Abstract metadata (journal/year) still flows through even though the
+        # abstract body itself isn't sent -- fulltext is richer.
         self.assertIn("NEJM", content)
 
     def test_ungrounded_prompt_falls_back_to_show_notes_and_warns_conservative(self):
@@ -1269,7 +1363,7 @@ class ScreenTrialsTests(unittest.TestCase):
             "citation_label": "Gowing 2016",
             "brief_summary": "Alpha2-agonists reduce opioid withdrawal symptoms.",
         }
-        content, grounded_in = build_screening_prompt(trial, None)
+        content, grounded_in = build_screening_prompt(trial, None, None)
         self.assertEqual(grounded_in, "show_notes_only")
         self.assertIn("no PubMed abstract was available", content)
         self.assertIn("Alpha2-agonists", content)

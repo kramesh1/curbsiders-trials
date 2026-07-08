@@ -18,6 +18,7 @@ rather than raising, so a batch caller can fall back to a show-notes-only
 summary instead of crashing.
 """
 
+import json
 import re
 import time
 import urllib.error
@@ -31,6 +32,7 @@ except ImportError:
     from trial_utils import normalize_pubmed_url
 
 EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+ELINK_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
 
 # PMIDs are parseable out of these two citation URL shapes; anything else
 # (doi.org, publisher domains like nejm.org/jamanetwork.com) is left alone --
@@ -140,8 +142,102 @@ def parse_efetch_response(raw: bytes, *, pmid: str) -> dict | None:
     }
 
 
+def resolve_pmcid(pmid: str, *, api_key: str | None = None, email: str | None = None, tool: str = "curbsiders_to_trials") -> str | None:
+    """Resolve a PMC ID for a PMID via NCBI's elink, or None if the paper has no
+    open-access full text in PubMed Central."""
+    params = {"dbfrom": "pubmed", "db": "pmc", "id": pmid, "retmode": "json", "tool": tool}
+    if email:
+        params["email"] = email
+    if api_key:
+        params["api_key"] = api_key
+
+    _throttle(has_api_key=bool(api_key))
+    url = f"{ELINK_URL}?{urllib.parse.urlencode(params)}"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as response:
+            raw = response.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+    return parse_elink_response(raw)
+
+
+def parse_elink_response(raw: bytes) -> str | None:
+    """Parse an elink JSON payload into a bare PMC ID (e.g. "PMC1234567"), or None.
+
+    elink returns several linksetdbs with dbto="pmc" -- only "pubmed_pmc" is the
+    PMID's own PMC deposit. "pubmed_pmc_refs" (and similar) are cited-by/related
+    links to OTHER articles and must not be treated as this paper's full text.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    for linkset in data.get("linksets") or []:
+        for linksetdb in linkset.get("linksetdbs") or []:
+            if linksetdb.get("dbto") != "pmc" or linksetdb.get("linkname") != "pubmed_pmc":
+                continue
+            ids = linksetdb.get("links") or []
+            if ids:
+                return f"PMC{ids[0]}"
+    return None
+
+
+_PMC_SKIP_TAGS = {"ref-list", "table-wrap", "fig", "disp-formula", "back"}
+
+
+def _extract_body_paragraphs(elem: ET.Element) -> list[str]:
+    texts = []
+    for child in elem:
+        if child.tag in _PMC_SKIP_TAGS:
+            continue
+        if child.tag == "p":
+            text = re.sub(r"\s+", " ", "".join(child.itertext())).strip()
+            if text:
+                texts.append(text)
+        else:
+            texts.extend(_extract_body_paragraphs(child))
+    return texts
+
+
+def parse_pmc_fulltext(raw: bytes, *, max_chars: int = 45000) -> str | None:
+    """Flatten a PMC open-access JATS XML article body into plain text, skipping
+    references/tables/figures, or None if there's no usable body. Capped at
+    max_chars so one paper can't blow out a model prompt's token budget."""
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return None
+    body = root.find(".//body")
+    if body is None:
+        return None
+    paragraphs = _extract_body_paragraphs(body)
+    if not paragraphs:
+        return None
+    return "\n\n".join(paragraphs)[:max_chars]
+
+
+def fetch_pmc_fulltext(pmcid: str, *, api_key: str | None = None, email: str | None = None, tool: str = "curbsiders_to_trials") -> str | None:
+    """Fetch the open-access full-text body for a PMC ID, or None on any failure
+    (including papers in PMC that aren't in the open-access subset)."""
+    params = {"db": "pmc", "id": pmcid, "rettype": "full", "retmode": "xml", "tool": tool}
+    if email:
+        params["email"] = email
+    if api_key:
+        params["api_key"] = api_key
+
+    _throttle(has_api_key=bool(api_key))
+    url = f"{EFETCH_URL}?{urllib.parse.urlencode(params)}"
+    try:
+        with urllib.request.urlopen(url, timeout=20) as response:
+            raw = response.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+    return parse_pmc_fulltext(raw)
+
+
 _SCREENING_FIELDS = (
-    "population", "intervention", "comparator", "outcome", "study_quality_limitations",
+    "population", "intervention", "comparator", "outcome", "clinical_bottom_line",
+    "study_quality_limitations",
 )
 
 

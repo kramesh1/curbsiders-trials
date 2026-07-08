@@ -41,7 +41,7 @@ The missing `22` episodes are currently zero-trial episodes, not ingestion failu
 
 The transcript corpus and the owner-gated candidate-pearl pass are a context/search layer, deliberately kept out of the auto-published verbatim pearl path (see below). `data/candidate_pearls.json` currently holds `3016` quote-verified candidates (drafted via the Batch API, see [Candidate pearls from transcripts](#candidate-pearls-from-transcripts)), all still `pending` review; nothing has been promoted into `data/approved_pearls.json` yet.
 
-The research-screening pass (`scripts/screen_trials.py`, see [Research screening](#research-screening-owner-gated)) and the visitor-feedback layer (`worker/` + `scripts/import_feedback.py`, see [Visitor feedback](#visitor-feedback-owner-gated)) have both shipped but have no generated/collected data yet — both are opt-in, run-it-yourself passes.
+The research-screening pass (`scripts/screen_trials.py`, see [Research screening](#research-screening-owner-gated)) has a validated 23-trial pilot batch (`data/trial_screening.json`, all `review_status: "pending"` — nothing promoted to the site yet); full rollout across the `3614`-trial PMID-resolvable pool is pending an owner decision (pilot cost ≈$0.27 on `claude-sonnet-5` batch pricing, projecting to ≈$42 for the full pool). The visitor-feedback layer (`worker/` + `scripts/import_feedback.py`, see [Visitor feedback](#visitor-feedback-owner-gated)) has shipped but has no collected data yet — it's an opt-in, run-it-yourself pass.
 
 ## Data artifacts
 
@@ -58,7 +58,10 @@ The research-screening pass (`scripts/screen_trials.py`, see [Research screening
   Bookkeeping for an in-flight or most-recently-collected Batch API submission from `generate_candidate_pearls.py submit-batch` (batch ID, model, per-episode `custom_id` map, a fingerprint used to sanity-check `collect`). Safe to commit — no secrets, just a job reference.
 
 - [data/trial_screening.json](data/trial_screening.json) / `data/trial_screening_approved.json`
-  Owner-gated PICO + quality-signal screening for cited trials (`scripts/screen_trials.py`), grounded in the real PubMed abstract when one resolves (`grounded_in: "pubmed_abstract"`) and falling back to a more conservative summary of the show notes' own gloss otherwise (`"show_notes_only"`). `apply` copies `review_status: "approved"` records into `trial_screening_approved.json`, the only file `build_site.py` reads for this pass. Neither file exists yet — no screening has been generated so far.
+  Owner-gated PICO + clinical-bottom-line screening for cited trials (`scripts/screen_trials.py`), grounded in the real paper text when one resolves — the open-access full text via PubMed Central (`grounded_in: "pmc_fulltext"`) when available, else the PubMed abstract (`"pubmed_abstract"`), else a more conservative summary of the show notes' own gloss (`"show_notes_only"`). `apply` copies `review_status: "approved"` records into `trial_screening_approved.json`, the only file `build_site.py` reads for this pass. Neither file exists yet — no screening has been generated so far.
+
+- `data/trial_screening_batch.json`
+  Bookkeeping for an in-flight or most-recently-collected Batch API submission from `screen_trials.py submit-batch` (batch ID, model, per-trial `custom_id` map, a fingerprint used to sanity-check `collect`). Safe to commit — no secrets, just a job reference.
 
 - [data/extraction_state.json](data/extraction_state.json)
   Per-episode processing manifest with completion state, chunk counts, and errors.
@@ -220,31 +223,50 @@ The same gap count also appears in `python scripts/ingest.py --report`.
 
 `scripts/trial_detail_utils.py` deliberately defers PICO (population / intervention /
 comparator / outcome) extraction to "a future model-backed pass," to avoid inventing
-clinical detail the show notes never stated. `scripts/screen_trials.py` is that pass,
-fenced the same way as every other model-touching step in this repo:
+clinical detail the show notes never stated. `scripts/screen_trials.py` is that pass —
+it also drafts a **clinical bottom line**: one or two sentences on what a resident
+should actually do differently on rounds because of the study, grounded the same way
+as the PICO fields and null when the source text doesn't support a concrete claim.
+Fenced the same way as every other model-touching step in this repo:
 
-- **Grounded where possible.** When a citation resolves to a PubMed ID
-  (`scripts/pubmed_utils.resolve_pmid`), the model is given the real fetched abstract
-  (via NCBI's free E-utilities API, no key required) and asked to summarize only that
-  text. When no PMID resolves, it falls back to the podcast's own show-notes gloss and
-  is explicitly told to be more conservative — every record carries a `grounded_in`
-  flag (`"pubmed_abstract"` | `"show_notes_only"`) so the site can show which is which.
-- **Null discipline.** The prompt requires `null` (not a guess) for any PICO field the
-  source text doesn't state — no filling in what a study "probably" found.
+- **Grounded in the real paper where possible, not just the abstract.** When a
+  citation resolves to a PubMed ID (`scripts/pubmed_utils.resolve_pmid`), the pass
+  tries to resolve an open-access full text via PubMed Central
+  (`scripts/pubmed_utils.resolve_pmcid` + `fetch_pmc_fulltext`, via NCBI's free
+  E-utilities, no key required) and gives the model that instead of just the
+  abstract — richer grounding for both PICO and the bottom line, since abstracts
+  often omit the numbers a bedside recommendation needs. Falls back to the abstract
+  when no open-access full text exists, and to the podcast's own show-notes gloss
+  (with an explicit instruction to be more conservative) when no PMID resolves at
+  all. Every record carries a `grounded_in` flag (`"pmc_fulltext"` |
+  `"pubmed_abstract"` | `"show_notes_only"`) so the site can show which is which.
+- **Null discipline.** The prompt requires `null` (not a guess) for any PICO or
+  clinical-bottom-line field the source text doesn't state — no filling in what a
+  study "probably" found, and no generic restatement of the intervention standing in
+  for an actual bottom line.
 - **Owner-gated.** Output goes to `data/trial_screening.json` with
   `review_status: "pending"`. It never writes `docs/data/trials.json` directly.
   Not part of `ingest.py` — it spends tokens and makes external network calls to NCBI.
 
 ```bash
-python scripts/screen_trials.py generate --limit 5             # first 5 eligible trials
+python scripts/screen_trials.py generate --limit 5             # first 5 eligible trials, synchronous
 python scripts/screen_trials.py generate --source pubmed       # skip un-groundable trials
+python scripts/screen_trials.py generate --no-fulltext         # abstract-only, skip the PMC lookup
+python scripts/screen_trials.py submit-batch --limit 50        # same pool via the Batch API (50% cheaper)
+python scripts/screen_trials.py collect --wait                 # retrieve batch results (usually <1h)
 python scripts/screen_trials.py report                          # counts + review status
 python scripts/screen_trials.py adjudicate --trial "SPRINT" --approve
 python scripts/screen_trials.py apply                            # -> data/trial_screening_approved.json
-python scripts/build_site.py                                    # publish PICO/quality fields
+python scripts/build_site.py                                    # publish PICO/bottom-line fields
 ```
 
-Defaults to `claude-opus-4-8` (override with `--model`). Requires `ANTHROPIC_API_KEY`.
+Defaults to `claude-sonnet-5` (override with `--model claude-opus-4-8` for
+higher-stakes spot checks) — at the scale of thousands of trials this pass runs
+against, cost matters more than squeezing out the last bit of model quality, and
+grounding real paper text keeps quality high even on the cheaper model. Prefer
+`submit-batch` + `collect` over `generate` for anything beyond a small pilot: same
+output, half the price, and it doesn't tie up a terminal. Requires
+`ANTHROPIC_API_KEY`.
 
 ## Visitor feedback (owner-gated)
 

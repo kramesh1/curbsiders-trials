@@ -933,6 +933,10 @@ footer .disclaimer {
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
+.grounding-badge.grounding-pmc_fulltext {
+  background: rgba(31, 107, 109, 0.16);
+  color: var(--teal);
+}
 .grounding-badge.grounding-pubmed_abstract {
   background: rgba(57, 114, 38, 0.13);
   color: #376b1c;
@@ -940,6 +944,15 @@ footer .disclaimer {
 .grounding-badge.grounding-show_notes_only {
   background: rgba(19, 34, 56, 0.08);
   color: var(--ink-soft);
+}
+.card-bottom-line {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.card-bottom-line strong {
+  color: var(--teal);
 }
 .pico-block {
   display: flex;

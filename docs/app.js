@@ -1541,12 +1541,21 @@ function pageButton(label, page, disabled, active = false) {
   `;
 }
 
+const GROUNDING_LABELS = {
+  pmc_fulltext: 'From full text (PMC)',
+  pubmed_abstract: 'From PubMed abstract',
+  show_notes_only: 'From show notes only',
+};
+
 function screeningHTML(trial) {
   if (!trial.grounded_in) return '';
-  const groundingLabel = trial.grounded_in === 'pubmed_abstract' ? 'From PubMed abstract' : 'From show notes only';
+  const groundingLabel = GROUNDING_LABELS[trial.grounded_in] || 'From show notes only';
   const groundingBadge = `<span class="grounding-badge grounding-${esc(trial.grounded_in)}">${esc(groundingLabel)}</span>`;
   const confidenceBadge = trial.screening_confidence
     ? `<span class="confidence-badge confidence-${esc(trial.screening_confidence)}">${cap(trial.screening_confidence)} confidence</span>`
+    : '';
+  const bottomLine = trial.clinical_bottom_line
+    ? `<p class="card-bottom-line"><strong>Inpatient bottom line:</strong> ${esc(trial.clinical_bottom_line)}</p>`
     : '';
   const picoFields = [
     ['Population', trial.population],
@@ -1562,13 +1571,14 @@ function screeningHTML(trial) {
   const limitations = trial.study_quality_limitations
     ? `<p class="card-limitations">${esc(trial.study_quality_limitations)}</p>`
     : '';
-  if (!picoList && !limitations) return '';
+  if (!bottomLine && !picoList && !limitations) return '';
   return `
     <div class="pico-block">
       <div class="pico-block-header">
         ${groundingBadge}
         ${confidenceBadge}
       </div>
+      ${bottomLine}
       ${picoList}
       ${limitations}
     </div>
