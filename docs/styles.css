@@ -1001,6 +1001,51 @@ footer .disclaimer {
   color: var(--ink-soft);
   font-style: italic;
 }
+.linked-pearls-block,
+.show-note-citations {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(19, 34, 56, 0.08);
+  border-radius: 12px;
+  background: rgba(157, 60, 43, 0.045);
+}
+.show-note-citations {
+  background: rgba(31, 107, 109, 0.045);
+}
+.linked-pearls-title,
+.show-note-citations-title {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.linked-pearl-row {
+  display: grid;
+  gap: 0.4rem;
+}
+.linked-pearl-row p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.48;
+  color: var(--ink);
+}
+.linked-pearl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.show-note-citations a {
+  font-size: 0.86rem;
+  line-height: 1.35;
+  color: var(--teal);
+  text-decoration: none;
+}
+.show-note-citations a:hover {
+  text-decoration: underline;
+}
 .pearl-cite-name {
   border: none;
   background: none;

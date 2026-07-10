@@ -7,10 +7,12 @@ This repository is currently strong enough to browse, search, and begin human re
 Use the site for two teaching workflows:
 
 1. **Prepare a chalk talk**
-   Search the `Evidence browser` by condition, drug, or trial name. Filter by `RCT`, `systematic review`, `meta-analysis`, or `guideline` to separate primary evidence from synthesis and current-practice sources.
+   Start in `Teaching pearls` with `Reviewed evidence only` when you want quick practice-changing takeaways. Those links come from the owner-gated `evidence_links` layer, not the noisy term-overlap citation layer.
 
 2. **Trace a Curbsiders citation**
-   Open a record, follow the episode backlink, and compare the record summary against the original show-note context before using it in teaching.
+   Open a record, follow the episode backlink or source hyperlink, and compare the record summary against the original show-note context before using it in teaching. Evidence cards now also show reviewed teaching pearls linked back to that evidence when the pearl→evidence link has been signed off.
+
+Use the `Evidence browser` by condition, drug, trial name, or pearl language when you need the broader citation map. Filter by `RCT`, `systematic review`, `meta-analysis`, or `guideline` to separate primary evidence from synthesis and current-practice sources.
 
 ## Review Priorities
 
@@ -36,12 +38,25 @@ Review in this order:
 For each reviewed record, confirm:
 
 - The cited paper/trial is actually present in the Curbsiders show notes.
+- If the record came only from `data/show_note_evidence.json`, decide whether it should stay as a source-only citation, be merged into an existing canonical record, or be enriched with a better PMID/DOI/title.
 - `citation_label` is recognizable to a clinician.
 - `paper_title` is not invented if the show notes do not supply it.
 - `study_type` matches the cited source.
 - `brief_summary` is supported by the show notes and does not overstate clinical impact.
 - `specialty_tags` are useful for discovery.
 - Episode backlinks point to the right source episode.
+
+For pearl→evidence links specifically, treat `supporting_citations` as heuristic same-episode overlap only. A citation should be used for teaching only after it survives the `evidence_links` adjudication path.
+
+## Show-note evidence layer
+
+`data/show_note_evidence.json` is the deterministic inventory of likely clinical-evidence hyperlinks actually present in show notes. It uses PMID, DOI, PMCID, NCT ID, or normalized URL as the stable key, then `build_site.py` merges those records into the evidence browser. Use it to audit evidence the model extractor missed and to reconcile duplicate records created when a publisher URL and PubMed URL refer to the same paper.
+
+```bash
+python scripts/extract_show_note_evidence.py   # write data/show_note_evidence.json and print match/gap counts
+python scripts/build_site.py                   # merge show-note evidence into docs/data/trials.json
+python scripts/validate_repository.py          # checks dangling pearl links and show-note evidence matches
+```
 
 ## Adjudicating pearl evidence links
 
@@ -62,22 +77,25 @@ python scripts/link_pearls_evidence.py apply             # refresh data/pearls_l
 ```
 
 Good first review queue: the low-confidence and `background`-support links
-(`--confidence low`, `--support background`). Use `--reset` to undo a decision (per-link
+(`--confidence low`, `--support background`). The default `apply` step now publishes only
+direct, non-low-confidence reviewed links; use `--include-background` or
+`--include-low-confidence` only for review/debug artifacts. Use `--reset` to undo a decision (per-link
 or, with `--record`, the whole record back to `pending`), or `--from-file feedback.json`
 to apply a batch of captured decisions (add `"scope": "record"` to an entry to sign off a
-record instead of a link). Only rejected links are dropped by `apply`, and only records
-you've explicitly marked `"approved"` are applied at all — `apply --include-pending` is
+record instead of a link). Rejected links are always dropped by `apply`, and only records
+you've explicitly marked `"approved"` are applied at all by default — `apply --include-pending` is
 available but bypasses that gate, so avoid it for anything headed to the public site.
 
-As of the last full pass, all 845 model-drafted records were reset to `"pending"` after
-discovering the record-level gate had been bulk-set to `"approved"` outside this workflow
-(i.e., without ever going through per-link/per-record adjudication). Treat every record as
-unreviewed until it has actually been through the steps above.
+As of the latest rebuild, `398` model-drafted records have record-level approval and are
+eligible for publication after the stricter `apply` filters. The remaining `447` records
+are still `pending`; treat them as unreviewed until they have actually been through the
+steps above.
 
 ## Local QA Commands
 
 ```bash
 python scripts/build_site.py
+python scripts/extract_show_note_evidence.py   # show-note evidence hyperlink inventory + gap counts
 python scripts/validate_repository.py
 python scripts/pearl_coverage.py            # episodes with no pearls yet (+ transcript availability)
 python -m unittest discover -s tests

@@ -1,9 +1,10 @@
 # Automating the weekly ingest
 
 `scripts/ingest.py` picks up new Curbsiders episodes and rebuilds the deterministic
-layers. It is **idempotent and safe to run on a timer**: scraping and transcript
-fetching are free, and the paid trial-extraction stage is skipped entirely when no
-new episode is pending — so a run that finds nothing new spends ~0 tokens.
+layers: enrichment, pearls, the show-note evidence hyperlink inventory, and the
+published site JSON. It is **idempotent and safe to run on a timer**: scraping and
+transcript fetching are free, and the paid trial-extraction stage is skipped entirely
+when no new episode is pending — so a run that finds nothing new spends ~0 tokens.
 
 Everything here drives that from a schedule. `run_ingest.sh` is the entry point:
 it resolves the repo, loads `.env` (for `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`),

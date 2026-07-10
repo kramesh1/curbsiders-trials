@@ -6,8 +6,8 @@ This repository builds a searchable teaching reference of clinical trials, obser
 
 The static site has two working modes:
 
-- **Teaching pearls** (default): verbatim clinical pearls pulled from the show-note `Pearls` sections, each linked to the trials, guidelines, and reviews cited in the same episode. This is the fastest path to a quick teaching point plus its evidence.
-- **Evidence browser**: searchable/filterable canonical records with backlinks to the Curbsiders episodes where each paper or trial was mentioned.
+- **Teaching pearls** (default): verbatim clinical pearls pulled from the show-note `Pearls` sections, with reviewed `evidence_links` shown when a trial, guideline, review, or meta-analysis directly supports a practice-changing teaching point.
+- **Evidence browser**: searchable/filterable canonical records with backlinks to the Curbsiders episodes where each paper or trial was cited, plus reviewed pearl backlinks when an evidence record supports a teaching point.
 
 ## Local quick start
 
@@ -25,16 +25,17 @@ The site is static, but it must be served over HTTP so the browser can fetch `do
 
 ## Current status
 
-As of July 6, 2026, the extraction pipeline has been run across the full scraped episode set, the teaching-pearls layer was added, a model-assisted pearl→evidence linking layer was added, a full-episode transcript corpus was harvested, a visitor-feedback layer and a research-screening pass were added, and the site dataset was rebuilt.
+As of July 9, 2026, the extraction pipeline has been run across the full scraped episode set, the teaching-pearls layer was added, a model-assisted pearl→evidence linking layer was added, a full-episode transcript corpus was harvested, a visitor-feedback layer and a research-screening pass were added, and the site dataset was rebuilt.
 
 - `555` episodes marked completed in [data/extraction_state.json](data/extraction_state.json)
 - `0` failed episodes
 - `6793` extracted trial mentions in [data/trials.json](data/trials.json)
-- `6225` canonical trial records in [docs/data/trials.json](docs/data/trials.json)
-- `533` episodes with at least one extracted literature mention
-- `5903` canonical records with an outbound literature link
-- `1896` episode-level teaching pearls in [data/pearls.json](data/pearls.json) across `336` of `555` episodes; the remaining `219` episodes have no recognizable show-note `Pearls` section (see [pearl coverage](#pearl-coverage-gap) — `171` of those have a transcript and are feedable to the candidate-pearl generator)
-- `845` pearls have model-drafted `evidence_links` (`1537` links across `227` episodes) in [data/pearl_evidence_links.json](data/pearl_evidence_links.json). Of those, `398` records have been reviewed and signed off (every link high-confidence/direct-support with a clinician-recognizable citation, spot-checked) and are applied onto [data/pearls_linked.json](data/pearls_linked.json); the remaining `447` are still `pending` and withheld from the site until a reviewer adjudicates them (see [Adjudication loop](#adjudication-loop))
+- `6243` model-extracted canonical trial records, merged with deterministic show-note hyperlinks into `6785` canonical evidence records in [docs/data/trials.json](docs/data/trials.json)
+- `535` episodes with at least one evidence record
+- `6444` canonical records with an outbound literature/source link
+- `5887` canonical cited evidence links in [data/show_note_evidence.json](data/show_note_evidence.json), representing `9225` evidence hyperlink mentions across `525` episodes; `5345` matched existing extracted records and `542` became show-note-only evidence records
+- `2089` episode-level teaching pearls in [data/pearls.json](data/pearls.json) across `337` of `555` episodes; the remaining `218` episodes have no recognizable show-note `Pearls` section (see [pearl coverage](#pearl-coverage-gap))
+- `845` pearls have model-drafted `evidence_links` (`1537` links across `227` episodes) in [data/pearl_evidence_links.json](data/pearl_evidence_links.json). Of those, `398` records have been reviewed and signed off; the stricter apply step now publishes only direct, non-low-confidence links by default, yielding `373` raw pearl rows with `505` reviewed links in [data/pearls_linked.json](data/pearls_linked.json), which canonicalize to `372` pearls with `504` reviewed links in [docs/data/pearls.json](docs/data/pearls.json). The evidence browser now exposes `471` records with reviewed linked-pearl backlinks. The remaining `447` records are still `pending` and withheld from the site until a reviewer adjudicates them (see [Adjudication loop](#adjudication-loop))
 - `448` full-episode transcripts in `data/transcripts.json` (untracked, local-only — see note below): `94` official (human/CME-reviewed) and `354` YouTube auto-captions filling the gaps (`ai_generated`)
 
 The missing `22` episodes are currently zero-trial episodes, not ingestion failures.
@@ -69,20 +70,23 @@ The research-screening pass (`scripts/screen_trials.py`, see [Research screening
 - [data/trials.json](data/trials.json)
   Episode-level extracted trial mentions after within-episode normalization and deduplication.
 
+- [data/show_note_evidence.json](data/show_note_evidence.json)
+  Deterministic inventory of likely clinical-evidence hyperlinks actually present in Curbsiders show notes. Each record has a stable `evidence_key` based on PMID, DOI, PMCID, NCT ID, or normalized URL, episode backlinks, source labels, and a `canonical_key` when it matches the model-extracted evidence browser. `build_site.py` merges this layer into [docs/data/trials.json](docs/data/trials.json), adding show-note-only records for cited evidence the model extractor missed.
+
 - [data/pearls.json](data/pearls.json)
-  Episode-level teaching pearls extracted verbatim from show-note `Pearls` sections, each with the supporting citations found in the same episode.
+  Episode-level teaching pearls extracted verbatim from show-note `Pearls` sections. The `supporting_citations` field is a deterministic same-episode term-overlap aid for audit/review, not a teaching-grade evidence claim.
 
 - [data/pearl_evidence_links.json](data/pearl_evidence_links.json) / [data/pearls_linked.json](data/pearls_linked.json)
-  The model-assisted pearl→evidence linking layer (owner-gated). The sidecar (`pearl_evidence_links`) holds, per pearl, the episode's own trials the model judged to support it — each link with `support`, `confidence`, a `rationale`, a per-link `review_status`, and a record-level `review_status`. `apply` only merges records marked `"approved"` at the record level (the reviewer's explicit sign-off), dropping any individual link marked `rejected`, onto a copy of the pearls as `evidence_links` in `pearls_linked.json` — leaving `data/pearls.json` untouched. See the linking section below.
+  The model-assisted pearl→evidence linking layer (owner-gated). The sidecar (`pearl_evidence_links`) holds, per pearl, the episode's own trials the model judged to support it — each link with `support`, `confidence`, a `rationale`, a per-link `review_status`, and a record-level `review_status`. `apply` only merges records marked `"approved"` at the record level (the reviewer's explicit sign-off), drops any individual link marked `rejected`, and by default publishes only direct, non-low-confidence links as `evidence_links` in `pearls_linked.json` — leaving `data/pearls.json` untouched. See the linking section below.
 
 - [data/pearls_coverage_gap.json](data/pearls_coverage_gap.json)
   The list of episodes with no extracted pearls yet, each annotated with whether a transcript exists (and its source). Generated by `scripts/pearl_coverage.py`.
 
 - [docs/data/trials.json](docs/data/trials.json)
-  Canonicalized site dataset with one record per trial or paper plus backlinks to all episodes mentioning it.
+  Canonicalized site dataset with one record per trial, paper, guideline, or cited evidence hyperlink plus backlinks to all episodes citing it. Records can include `show_note_citations` from the deterministic hyperlink layer and `linked_pearls` reverse backlinks from reviewed pearl→evidence links.
 
 - [docs/data/pearls.json](docs/data/pearls.json)
-  Canonicalized pearls for the site: one record per unique pearl, with episode backlinks, term-overlap citations, and (when present) model-authored `evidence_links` merged across episodes, keeping the highest-ranked link per trial. The Teaching-pearls view renders these ahead of any remaining term-overlap-only citations.
+  Canonicalized pearls for the site: one record per unique pearl, with episode backlinks, heuristic term-overlap citations retained for audit, and reviewed `evidence_links` merged across episodes. The Teaching-pearls view treats only `evidence_links` as linked clinical evidence.
 
 - `data/batches/`
   Optional local OpenAI Batch API inputs and outputs. These are ignored for sharing because they can contain request payloads, provider object IDs, and machine-specific paths.
@@ -110,13 +114,17 @@ The research-screening pass (`scripts/screen_trials.py`, see [Research screening
 
    Preferred workflow for larger reruns and backfills. It builds a saved local batch directory under `data/batches/`, submits one request per show-note chunk, then downloads and merges results into the local dataset.
 
-5. `python scripts/extract_pearls.py`
+5. `python scripts/extract_show_note_evidence.py`
 
-   Deterministically extracts the show-note `Pearls` sections into [data/pearls.json](data/pearls.json) and links each pearl to the episode's already-extracted trial mentions. No model calls, so it is cheap and safe to re-run any time. To see which episodes yielded no pearls, run `python scripts/pearl_coverage.py` (see [Pearl coverage gap](#pearl-coverage-gap)).
+   Deterministically harvests likely clinical-evidence hyperlinks from [data/episodes.json](data/episodes.json) into [data/show_note_evidence.json](data/show_note_evidence.json). It normalizes PMID/DOI/PMCID/NCT/URL identities and annotates records that already match the model-extracted canonical trial layer. `build_site.py` also regenerates this artifact, so this standalone step is mainly for auditing counts and gaps.
 
-6. `python scripts/build_site.py`
+6. `python scripts/extract_pearls.py`
 
-   Canonicalizes duplicate trial mentions across episodes and rewrites [docs/data/trials.json](docs/data/trials.json), and canonicalizes pearls into [docs/data/pearls.json](docs/data/pearls.json), for the browser UI. If [data/pearls_linked.json](data/pearls_linked.json) exists, its `evidence_links` are merged onto the pearls first (by episode + pearl text) so the site can render them.
+   Deterministically extracts the show-note `Pearls` sections into [data/pearls.json](data/pearls.json) and attaches heuristic same-episode citations by term overlap. No model calls, so it is cheap and safe to re-run any time, but these overlap citations are not considered reviewed teaching evidence. To see which episodes yielded no pearls, run `python scripts/pearl_coverage.py` (see [Pearl coverage gap](#pearl-coverage-gap)).
+
+7. `python scripts/build_site.py`
+
+   Canonicalizes duplicate trial mentions across episodes, merges the deterministic show-note evidence layer, repairs stale reviewed pearl evidence keys when they can be matched to current canonical records, rewrites [docs/data/trials.json](docs/data/trials.json), and canonicalizes pearls into [docs/data/pearls.json](docs/data/pearls.json). If [data/pearls_linked.json](data/pearls_linked.json) exists, its `evidence_links` are merged onto the pearls first (by episode + pearl text) so the site can render pearl→evidence links and evidence→pearl backlinks.
 
 The site is a static app rooted at [docs/index.html](docs/index.html).
 
@@ -164,10 +172,10 @@ after each such rebuild, then `build_site.py` again.
 
 ## Model-assisted pearl→evidence linking (owner-gated)
 
-The deterministic linker in step 5 links pearls to trials by term overlap, which is
-lossy and imprecise. `scripts/link_pearls_evidence.py` upgrades this: it asks a model,
+The deterministic linker in step 6 links pearls to trials by term overlap, which is
+lossy and imprecise and should be treated as an audit aid only. `scripts/link_pearls_evidence.py` upgrades this: it asks a model,
 one episode at a time, which of that episode's **own already-extracted trials** support
-each pearl. It is fenced the same way the candidate-pearl pass is — the model may only
+each pearl with direct, teaching-worthy evidence. It is fenced the same way the candidate-pearl pass is — the model may only
 refer to the supplied trials by index (it cannot cite a paper we didn't extract), every
 index is range-checked, and output goes to a sidecar (`data/pearl_evidence_links.json`),
 never `data/pearls.json`. It is not part of `ingest.py`; it spends tokens and is run
@@ -178,7 +186,7 @@ python scripts/link_pearls_evidence.py generate --episode 500   # one episode (s
 python scripts/link_pearls_evidence.py submit-batch             # all eligible via Batch API (50% cheaper)
 python scripts/link_pearls_evidence.py collect --wait           # retrieve batch results
 python scripts/link_pearls_evidence.py report                   # coverage lift vs term-overlap + adjudication counts
-python scripts/link_pearls_evidence.py apply                    # merge reviewed links -> data/pearls_linked.json
+python scripts/link_pearls_evidence.py apply                    # merge reviewed direct/high-confidence links -> data/pearls_linked.json
 ```
 
 ### Adjudication loop
@@ -196,6 +204,8 @@ python scripts/link_pearls_evidence.py adjudicate --episode 500 --record --appro
 python scripts/link_pearls_evidence.py apply        # re-apply so pearls_linked.json reflects it
 
 # Other link-level selectors: --pearl <substr>, --canonical-key <key>, --confidence low, --support background
+# Apply defaults to direct, non-low-confidence links; pass --include-background or
+# --include-low-confidence only for review/debug artifacts, not the public teaching view.
 # Reset a link (or, with --record, the whole record) back to pending:
 python scripts/link_pearls_evidence.py adjudicate --canonical-key "<key>" --reset
 ```

@@ -47,6 +47,7 @@ EPISODES_FILE = DATA_DIR / "episodes.json"
 TRIALS_FILE = DATA_DIR / "trials.json"
 STATE_FILE = DATA_DIR / "extraction_state.json"
 PEARLS_FILE = DATA_DIR / "pearls.json"
+SHOW_NOTE_EVIDENCE_FILE = DATA_DIR / "show_note_evidence.json"
 SITE_TRIALS_FILE = DOCS_DIR / "data" / "trials.json"
 SITE_PEARLS_FILE = DOCS_DIR / "data" / "pearls.json"
 INDEX_FILE = DOCS_DIR / "index.html"
@@ -92,7 +93,7 @@ def require(condition: bool, message: str, errors: list[str]) -> None:
 
 def main() -> int:
     errors: list[str] = []
-    for path in [EPISODES_FILE, TRIALS_FILE, STATE_FILE, SITE_TRIALS_FILE, INDEX_FILE]:
+    for path in [EPISODES_FILE, TRIALS_FILE, STATE_FILE, SHOW_NOTE_EVIDENCE_FILE, SITE_TRIALS_FILE, INDEX_FILE]:
         require(path.exists(), f"Missing required file: {path.relative_to(ROOT)}", errors)
     if errors:
         for error in errors:
@@ -140,6 +141,7 @@ def main() -> int:
 
     # Pearls are an optional layer; validate them only once they exist.
     canonical_pearls = load_json(SITE_PEARLS_FILE) if SITE_PEARLS_FILE.exists() else []
+    show_note_evidence = load_json(SHOW_NOTE_EVIDENCE_FILE)
     trial_keys = {trial.get("canonical_key") for trial in canonical}
     pearls_without_text = [pearl for pearl in canonical_pearls if not str(pearl.get("pearl", "")).strip()]
     pearls_without_episodes = [pearl for pearl in canonical_pearls if not pearl.get("episodes")]
@@ -155,12 +157,46 @@ def main() -> int:
         for citation in pearl.get("supporting_citations", [])
         if citation.get("canonical_key") and citation.get("canonical_key") not in trial_keys
     ]
-    pearls_with_citation = sum(1 for pearl in canonical_pearls if pearl.get("supporting_citations"))
+    dangling_reviewed_links = [
+        link.get("canonical_key")
+        for pearl in canonical_pearls
+        for link in pearl.get("evidence_links", [])
+        if link.get("canonical_key") and link.get("canonical_key") not in trial_keys
+    ]
+    show_note_keys = [record.get("evidence_key") for record in show_note_evidence]
+    show_note_missing_url = [record.get("evidence_key") for record in show_note_evidence if not record.get("url")]
+    show_note_bad_backlinks = [
+        record.get("evidence_key")
+        for record in show_note_evidence
+        for episode in record.get("episodes", [])
+        if episode.get("episode_url") and episode.get("episode_url") not in episode_urls
+    ]
+    show_note_bad_matches = [
+        record.get("canonical_key")
+        for record in show_note_evidence
+        if record.get("canonical_key") and record.get("canonical_key") not in trial_keys
+    ]
+    trial_bad_pearl_backlinks = [
+        trial.get("canonical_key")
+        for trial in canonical
+        for pearl in trial.get("linked_pearls", [])
+        if not str(pearl.get("pearl", "")).strip()
+    ]
+    pearls_with_heuristic_citation = sum(1 for pearl in canonical_pearls if pearl.get("supporting_citations"))
+    pearls_with_reviewed_evidence = sum(1 for pearl in canonical_pearls if pearl.get("evidence_links"))
+    evidence_with_linked_pearls = sum(1 for trial in canonical if trial.get("linked_pearls"))
+    evidence_from_show_notes = sum(1 for trial in canonical if "show_notes_links" in (trial.get("source_layers") or []))
 
     require(not pearls_without_text, "Some canonical pearls have empty text.", errors)
     require(not pearls_without_episodes, "Some canonical pearls have no episode backlinks.", errors)
     require(not pearls_with_bad_backlinks, "Some canonical pearls link to unknown episode URLs.", errors)
     require(not dangling_citation_links, "Some pearl citations reference unknown canonical trial keys.", errors)
+    require(not dangling_reviewed_links, "Some reviewed pearl evidence links reference unknown canonical trial keys.", errors)
+    require(len(show_note_keys) == len(set(show_note_keys)), "Show-note evidence keys are not unique.", errors)
+    require(not show_note_missing_url, "Some show-note evidence records have no URL.", errors)
+    require(not show_note_bad_backlinks, "Some show-note evidence records link to unknown episode URLs.", errors)
+    require(not show_note_bad_matches, "Some show-note evidence records match unknown canonical trial keys.", errors)
+    require(not trial_bad_pearl_backlinks, "Some evidence records have malformed linked pearl backlinks.", errors)
 
     # Classification / detail fields are soft: absence is legitimate (~28% of
     # episodes lack the structure). Only malformed *present* values fail the gate.
@@ -194,10 +230,14 @@ def main() -> int:
     print(f"  Trial mentions:          {len(trial_mentions)}")
     print(f"  Canonical records:       {len(canonical)}")
     print(f"  Records with links:      {linked_records}")
+    print(f"  Records from show-note links: {evidence_from_show_notes}")
     print(f"  Zero-trial episodes:     {len(zero_trial_episodes)}")
     print(f"  Study types:             {dict(study_type_counts.most_common())}")
+    print(f"  Show-note evidence records: {len(show_note_evidence)}")
     print(f"  Canonical pearls:        {len(canonical_pearls)}")
-    print(f"  Pearls with a citation:  {pearls_with_citation}")
+    print(f"  Pearls with heuristic citations: {pearls_with_heuristic_citation}")
+    print(f"  Pearls with reviewed evidence:   {pearls_with_reviewed_evidence}")
+    print(f"  Evidence records with linked pearls: {evidence_with_linked_pearls}")
     print(f"  Trials with a segment:   {trials_with_segment}")
     print(f"  Pearls with a segment:   {pearls_with_segment}")
 

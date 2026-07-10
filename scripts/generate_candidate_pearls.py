@@ -61,8 +61,9 @@ MAX_TOKENS = 8000
 MIN_QUOTE_CHARS = 15  # a verifiable quote has to be substantial
 
 SYSTEM_PROMPT = """\
-You are a careful internal-medicine educator extracting concise, high-yield teaching \
-pearls from a podcast episode transcript, for use as quick reference at the bedside.
+You are a careful internal-medicine educator extracting a small number of concise, \
+high-yield teaching pearls from a podcast episode transcript, for use as quick reference \
+at the bedside.
 
 Rules that matter more than anything else:
 - Ground every pearl in the transcript. For each pearl, quote the exact span of the \
@@ -70,8 +71,13 @@ transcript it comes from, copied VERBATIM (character for character) into \
 "supporting_quote". Do not paraphrase the quote, fix its grammar, or merge \
 non-adjacent spans. If you cannot support a statement with a verbatim quote, do not \
 include it.
-- Prefer specific, actionable clinical points (management thresholds, drug choices, \
-dosing, test interpretation, guideline changes) over generic background.
+- Prefer specific, actionable clinical points that connect evidence to a practice-changing \
+idea: management thresholds, drug choices, dosing, test interpretation, outcome tradeoffs, \
+harms, or guideline changes. Strong candidates usually mention a trial, guideline, \
+systematic review, quantified outcome, or explicit recommendation in the quoted text.
+- Do not extract every interesting quote. Omit generic background, pathophysiology, \
+definitions, anecdotes, and broad advice unless the quoted text ties it to clinical \
+evidence or a clear change in practice.
 - Keep each "statement" to one or two sentences, phrased as a clean teaching point.
 - Do NOT invent numbers, drug names, doses, or trial names not present in the quote.
 - It is better to return fewer, well-supported pearls than many weak ones. Return an \

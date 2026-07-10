@@ -15,8 +15,8 @@ const ERA_DEFS = [
 
 const PUBMED_OPTIONS = [
   { key: 'all', label: 'All records' },
-  { key: 'with', label: 'With PubMed link' },
-  { key: 'without', label: 'Without PubMed link' },
+  { key: 'with', label: 'With source link' },
+  { key: 'without', label: 'Without source link' },
 ];
 
 // Update this after deploying worker/ (see README's visitor-feedback section) --
@@ -239,6 +239,13 @@ function buildSearchDocument(trial) {
       ...(trial.episode_titles || []),
       ...(trial.episodes || []).map(episode => episode.episode_title),
     ],
+    pearls: [
+      ...(trial.linked_pearls || []).map(pearl => pearl.pearl),
+    ],
+    citations: [
+      ...(trial.show_note_citations || []).map(citation => citation.label),
+      ...(trial.show_note_citations || []).map(citation => citation.url),
+    ],
   };
 
   const normalizedFields = Object.fromEntries(
@@ -319,8 +326,8 @@ function renderHeroStats() {
   const episodes = new Set(
     allTrials.flatMap(trial => (trial.episodes || []).map(episode => episode.episode_url).filter(Boolean))
   ).size;
-  const withPubmed = allTrials.filter(trial => Boolean(trial.pubmed_url)).length;
-  const recentEra = eraCounts.find(era => era.key === '2020s')?.count || 0;
+  const withSourceLink = allTrials.filter(trial => Boolean(trial.pubmed_url)).length;
+  const linkedPearlRecords = allTrials.filter(trial => (trial.linked_pearls || []).length).length;
 
   document.getElementById('hero-stats').innerHTML = `
     <div class="stat-card">
@@ -336,12 +343,12 @@ function renderHeroStats() {
       <span class="stat-label">episodes covered</span>
     </div>
     <div class="stat-card">
-      <span class="stat-value">${withPubmed.toLocaleString()}</span>
-      <span class="stat-label">with PubMed links</span>
+      <span class="stat-value">${withSourceLink.toLocaleString()}</span>
+      <span class="stat-label">with source links</span>
     </div>
     <div class="stat-card stat-card-accent">
-      <span class="stat-value">${recentEra.toLocaleString()}</span>
-      <span class="stat-label">published in the 2020s</span>
+      <span class="stat-value">${linkedPearlRecords.toLocaleString()}</span>
+      <span class="stat-label">linked to pearls</span>
     </div>
   `;
 }
@@ -984,6 +991,9 @@ function lexicalSearchScore(trial, doc, parsed) {
   if (trial.pubmed_url) {
     score += 1.5;
   }
+  if ((trial.linked_pearls || []).length) {
+    score += 2.5;
+  }
   return { matched: true, score, coverage };
 }
 
@@ -992,8 +1002,10 @@ function fieldMatchScore(doc, term, phraseRequired) {
     ['title', phraseRequired ? 72 : 34],
     ['topic', phraseRequired ? 52 : 25],
     ['summary', phraseRequired ? 34 : 15],
+    ['pearls', phraseRequired ? 30 : 14],
     ['metadata', phraseRequired ? 24 : 12],
     ['episode', phraseRequired ? 18 : 8],
+    ['citations', phraseRequired ? 18 : 8],
   ];
 
   let score = 0;
@@ -1079,15 +1091,15 @@ function renderPearlsView() {
     <section class="pearls-summary">
       <div>
         <p class="section-kicker">Teaching layer</p>
-        <h3>Quick, quotable teaching pearls — each linked to the evidence behind it.</h3>
+        <h3>Quick, quotable teaching pearls with reviewed clinical evidence.</h3>
         <p>
-          Verbatim clinician takeaways pulled from Curbsiders show notes, paired with the trials,
-          guidelines, and reviews cited in the same episode.
+          Verbatim clinician takeaways pulled from Curbsiders show notes. Evidence links shown here
+          are reviewer-approved connections to practice-changing trials, guidelines, and reviews.
         </p>
       </div>
       <div class="pearls-metrics">
         <span><strong>${allPearls.length.toLocaleString()}</strong> pearls</span>
-        <span><strong>${linkedCount.toLocaleString()}</strong> with linked evidence</span>
+        <span><strong>${linkedCount.toLocaleString()}</strong> with reviewed evidence</span>
         <span><strong>${episodeCount.toLocaleString()}</strong> source episodes</span>
       </div>
     </section>
@@ -1101,7 +1113,7 @@ function renderPearlsView() {
         <input id="pearl-search" type="search" placeholder="Search pearls: statins, deprescribing, CKD…" autocomplete="off">
       </div>
       <button class="ghost-btn pearl-linked-btn" type="button" data-pearl-linked-toggle aria-pressed="false">
-        With evidence only
+        Reviewed evidence only
       </button>
     </div>
 
@@ -1173,7 +1185,7 @@ function applyPearlFilters() {
 }
 
 function pearlHasEvidence(pearl) {
-  return !!((pearl.supporting_citations || []).length || (pearl.evidence_links || []).length);
+  return !!((pearl.evidence_links || []).length);
 }
 
 function pearlMatchesQuery(pearl, needle) {
@@ -1184,7 +1196,6 @@ function pearlMatchesQuery(pearl, needle) {
     ...(pearl.segments || []),
     ...(pearl.specialty_tags || []),
     ...(pearl.episode_categories || []),
-    ...(pearl.supporting_citations || []).map(citation => citation.citation_label),
     ...(pearl.evidence_links || []).map(link => link.citation_label),
     ...(pearl.episodes || []).map(episode => episode.episode_title),
   ].filter(Boolean).join(' '));
@@ -1272,8 +1283,6 @@ function citationRowHTML(citation, pearl) {
   const pubmed = citation.pubmed_url
     ? `<a class="pearl-cite-link" href="${escAttr(safeUrl(citation.pubmed_url))}" target="_blank" rel="noopener">source ↗</a>`
     : '';
-  // Model-linked citations (from link_pearls_evidence.py) carry support/confidence/rationale;
-  // term-overlap-only citations do not.
   const supportBadge = citation.support
     ? `<span class="support-badge support-${esc(citation.support)}">${citation.support === 'direct' ? 'Direct evidence' : 'Background'}</span>`
     : '';
@@ -1316,21 +1325,16 @@ function pearlCardHTML(pearl) {
     .map(tag => `<span class="tag">${esc(cap(tag))}</span>`).join('');
 
   const evidenceLinks = pearl.evidence_links || [];
-  const modelLinkedKeys = new Set(evidenceLinks.map(link => link.canonical_key));
-  const modelCitations = evidenceLinks.map(link => citationRowHTML(link, pearl)).join('');
-  const otherCitations = (pearl.supporting_citations || [])
-    .filter(citation => !modelLinkedKeys.has(citation.canonical_key))
-    .map(citation => citationRowHTML(citation, pearl))
-    .join('');
+  const reviewedCitations = evidenceLinks.map(link => citationRowHTML(link, pearl)).join('');
 
-  const evidenceBlock = (modelCitations || otherCitations)
+  const evidenceBlock = reviewedCitations
     ? `
       <div class="pearl-evidence">
-        ${modelCitations ? `<p class="pearl-evidence-title">Evidence for this pearl</p>${modelCitations}` : ''}
-        ${otherCitations ? `<p class="pearl-evidence-title pearl-evidence-title-secondary">Also cited in this episode</p>${otherCitations}` : ''}
+        <p class="pearl-evidence-title">Reviewed evidence for this pearl</p>
+        ${reviewedCitations}
       </div>
     `
-    : `<p class="pearl-noevidence">Teaching point from the show notes — no cited study in this episode.</p>`;
+    : `<p class="pearl-noevidence">Teaching point from the show notes — no reviewed evidence link yet.</p>`;
 
   const episodes = (pearl.episodes || []).slice(0, 2).map(episode => {
     const label = episode.episode_number ? `Ep. #${episode.episode_number}` : 'Episode';
@@ -1585,6 +1589,56 @@ function screeningHTML(trial) {
   `;
 }
 
+function linkedPearlsHTML(trial) {
+  const pearls = trial.linked_pearls || [];
+  if (!pearls.length) {
+    return '';
+  }
+  return `
+    <div class="linked-pearls-block">
+      <p class="linked-pearls-title">Reviewed teaching pearls linked to this evidence</p>
+      ${pearls.slice(0, 4).map(pearl => `
+        <div class="linked-pearl-row">
+          <p>${esc(pearl.pearl || '')}</p>
+          <div class="linked-pearl-meta">
+            ${pearl.support ? `<span class="support-badge support-${esc(pearl.support)}">${pearl.support === 'direct' ? 'Direct evidence' : 'Background'}</span>` : ''}
+            ${pearl.confidence ? `<span class="confidence-badge confidence-${esc(pearl.confidence)}">${cap(pearl.confidence)} confidence</span>` : ''}
+          </div>
+        </div>
+      `).join('')}
+      ${pearls.length > 4 ? `<p class="episode-more">+${pearls.length - 4} more linked pearl${pearls.length - 4 === 1 ? '' : 's'}</p>` : ''}
+    </div>
+  `;
+}
+
+function showNoteCitationsHTML(trial) {
+  const citations = trial.show_note_citations || [];
+  if (!citations.length) {
+    return '';
+  }
+  const unique = [];
+  const seen = new Set();
+  for (const citation of citations) {
+    const key = `${citation.label || ''}|${citation.url || ''}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(citation);
+  }
+  return `
+    <div class="show-note-citations">
+      <p class="show-note-citations-title">Cited in show notes</p>
+      ${unique.slice(0, 3).map(citation => `
+        <a href="${escAttr(safeUrl(citation.url))}" target="_blank" rel="noopener">
+          ${esc(truncate(citation.label || citation.url || 'Source link', 86))}
+        </a>
+      `).join('')}
+      ${unique.length > 3 ? `<p class="episode-more">+${unique.length - 3} more citation link${unique.length - 3 === 1 ? '' : 's'}</p>` : ''}
+    </div>
+  `;
+}
+
 function cardHTML(trial) {
   const title = trial.citation_label || trial.paper_title || 'Untitled citation';
   const paperTitle = trial.paper_title && trial.paper_title !== title
@@ -1603,7 +1657,7 @@ function cardHTML(trial) {
   const metaBits = [
     trial.year ? `Published ${trial.year}` : 'Year unknown',
     trial.study_type ? studyTypeLabel(trial.study_type) : 'Other evidence',
-    trial.pubmed_url ? 'PubMed linked' : 'No PubMed link',
+    trial.pubmed_url ? 'Source linked' : 'No source link',
   ];
 
   const recentEpisode = trial.latest_episode_number
@@ -1625,7 +1679,7 @@ function cardHTML(trial) {
     : '';
 
   const pubmedLink = trial.pubmed_url
-    ? `<a class="card-link" href="${escAttr(safeUrl(trial.pubmed_url))}" target="_blank" rel="noopener">Open PubMed</a>`
+    ? `<a class="card-link" href="${escAttr(safeUrl(trial.pubmed_url))}" target="_blank" rel="noopener">Open source</a>`
     : '';
 
   return `
@@ -1641,6 +1695,8 @@ function cardHTML(trial) {
       ${paperTitle}
       <p class="card-summary">${esc(trial.brief_summary || 'No summary available.')}</p>
       ${screeningHTML(trial)}
+      ${linkedPearlsHTML(trial)}
+      ${showNoteCitationsHTML(trial)}
       ${topicTags}
 
       <div class="meta-row">

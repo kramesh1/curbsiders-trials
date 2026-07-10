@@ -57,6 +57,14 @@ from scripts.trial_utils import (
     recover_missing_urls_from_show_notes,
     split_show_notes_into_chunks,
 )
+from scripts.show_note_evidence import (
+    annotate_show_note_matches,
+    build_show_note_evidence_records,
+    evidence_identity_key,
+    merge_show_note_evidence,
+    normalize_evidence_url,
+    repair_pearl_evidence_links,
+)
 from scripts.segment_utils import (
     assign_segment_to_pearls,
     assign_segment_to_trials,
@@ -187,6 +195,115 @@ class NullSentinelTests(unittest.TestCase):
         ])
         self.assertEqual(len(canonical), 1)
         self.assertIsNone(canonical[0]["pubmed_url"])
+
+
+class ShowNoteEvidenceTests(unittest.TestCase):
+    def test_pubmed_url_normalizes_to_pmid_identity(self):
+        url = "http://pubmed.ncbi.nlm.nih.gov/30221597/?utm_source=foo"
+        self.assertEqual(normalize_evidence_url(url), "https://pubmed.ncbi.nlm.nih.gov/30221597")
+        self.assertEqual(evidence_identity_key("ASPREE", url), "pmid|30221597")
+
+    def test_builds_canonical_show_note_evidence_records(self):
+        episodes = [
+            {
+                "episode_number": 111,
+                "title": "Aspirin episode",
+                "url": "https://example.org/111",
+                "date": "2024-01-01",
+                "show_notes": (
+                    "[ASPREE trial](https://pubmed.ncbi.nlm.nih.gov/30221597/)\n"
+                    "[Subscribe](https://spotify.com/show/example)"
+                ),
+            }
+        ]
+        records = build_show_note_evidence_records(episodes)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["evidence_key"], "pmid|30221597")
+        self.assertEqual(records[0]["citation_label"], "ASPREE trial")
+        self.assertEqual(records[0]["episode_count"], 1)
+
+    def test_annotates_match_to_existing_canonical_record(self):
+        canonical = build_canonical_trial_records([
+            {
+                "citation_label": "ASPREE",
+                "paper_title": "Effect of Aspirin on Disability-free Survival",
+                "pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/30221597",
+                "year": 2018,
+                "brief_summary": "Summary.",
+                "context_topic": "Aspirin prevention",
+                "study_type": "RCT",
+                "specialty_tags": ["geriatrics"],
+                "episode_number": 111,
+                "episode_title": "Aspirin episode",
+                "episode_url": "https://example.org/111",
+            },
+        ])
+        show_note_records = [{
+            "evidence_key": "pmid|30221597",
+            "citation_label": "ASPREE trial",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/30221597",
+            "urls": ["https://pubmed.ncbi.nlm.nih.gov/30221597"],
+            "episodes": [],
+            "mentions": [],
+            "link_count": 1,
+        }]
+        annotated = annotate_show_note_matches(show_note_records, canonical)
+        self.assertEqual(annotated[0]["canonical_key"], canonical[0]["canonical_key"])
+
+    def test_merge_adds_unmatched_show_note_only_record(self):
+        canonical = []
+        show_note_records = [{
+            "evidence_key": "doi|10.1056/nejmoa2500000",
+            "canonical_key": None,
+            "citation_label": "New NEJM trial",
+            "url": "https://doi.org/10.1056/nejmoa2500000",
+            "urls": ["https://doi.org/10.1056/nejmoa2500000"],
+            "year": 2025,
+            "study_type": "RCT",
+            "episodes": [{
+                "episode_number": 500,
+                "episode_title": "New evidence",
+                "episode_url": "https://example.org/500",
+                "episode_date": "2025-01-01",
+            }],
+            "mentions": [{
+                "label": "New NEJM trial",
+                "url": "https://doi.org/10.1056/nejmoa2500000",
+                "episode_number": 500,
+                "episode_title": "New evidence",
+                "episode_url": "https://example.org/500",
+            }],
+            "link_count": 1,
+        }]
+        merged, stats = merge_show_note_evidence(canonical, show_note_records)
+        self.assertEqual(stats["unmatched_records"], 1)
+        self.assertEqual(merged[0]["canonical_key"], "show_note|doi|10.1056/nejmoa2500000")
+        self.assertEqual(merged[0]["source_layers"], ["show_notes_links"])
+
+    def test_repair_pearl_evidence_links_uses_current_label_match(self):
+        trials = [{
+            "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/31525747",
+            "citation_label": "PARAGON-HF",
+            "paper_title": "Angiotensin-Neprilysin Inhibition in Heart Failure",
+            "pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/31525747",
+            "episode_count": 1,
+            "source_layers": ["model_extraction", "show_notes_links"],
+        }]
+        pearls = [{
+            "pearl_key": "hf",
+            "pearl": "Future research is underway.",
+            "evidence_links": [{
+                "canonical_key": "label|paragon hf|None",
+                "citation_label": "PARAGON-HF",
+            }],
+        }]
+        repaired, count = repair_pearl_evidence_links(pearls, trials)
+        self.assertEqual(count, 1)
+        self.assertEqual(
+            repaired[0]["evidence_links"][0]["canonical_key"],
+            "pubmed|https://pubmed.ncbi.nlm.nih.gov/31525747",
+        )
+        self.assertEqual(repaired[0]["evidence_links"][0]["pubmed_url"], "https://pubmed.ncbi.nlm.nih.gov/31525747")
 
 
 class CanonicalizationTests(unittest.TestCase):
@@ -1039,7 +1156,7 @@ class PearlEvidenceLinkerTests(unittest.TestCase):
         raw = [
             {"pearl": 0, "trial": 5},   # trial index does not exist -> hallucination
             {"pearl": 9, "trial": 0},   # pearl index does not exist
-            {"pearl": 0, "trial": 1},   # valid
+            {"pearl": 0, "trial": 1, "support": "direct"},   # valid
         ]
         by_pearl, dropped = verify_links(raw, pearls, pool)
         self.assertEqual(dropped, 2)
@@ -1049,17 +1166,29 @@ class PearlEvidenceLinkerTests(unittest.TestCase):
     def test_verify_links_dedupes_repeated_trial_for_a_pearl(self):
         pool = self._pool()
         pearls = [{"pearl": "A pearl."}]
-        raw = [{"pearl": 0, "trial": 0}, {"pearl": 0, "trial": 0}]
+        raw = [
+            {"pearl": 0, "trial": 0, "support": "direct"},
+            {"pearl": 0, "trial": 0, "support": "direct"},
+        ]
         by_pearl, dropped = verify_links(raw, pearls, pool)
         self.assertEqual(len(by_pearl[0]), 1)
 
-    def test_verify_links_normalizes_bad_support_and_confidence(self):
+    def test_verify_links_drops_bad_support(self):
         pool = self._pool()
         pearls = [{"pearl": "A pearl."}]
         raw = [{"pearl": 0, "trial": 0, "support": "tangential", "confidence": "certain"}]
-        by_pearl, _ = verify_links(raw, pearls, pool)
+        by_pearl, dropped = verify_links(raw, pearls, pool)
+        self.assertEqual(dropped, 1)
+        self.assertNotIn(0, by_pearl)
+
+    def test_verify_links_normalizes_bad_confidence(self):
+        pool = self._pool()
+        pearls = [{"pearl": "A pearl."}]
+        raw = [{"pearl": 0, "trial": 0, "support": "direct", "confidence": "certain"}]
+        by_pearl, dropped = verify_links(raw, pearls, pool)
+        self.assertEqual(dropped, 0)
         cite = by_pearl[0][0]
-        self.assertEqual(cite["support"], "direct")   # unknown support -> default direct
+        self.assertEqual(cite["support"], "direct")
         self.assertIsNone(cite["confidence"])         # unknown confidence -> None
 
     def test_build_link_prompt_enumerates_pearls_and_trials(self):

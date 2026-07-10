@@ -1,171 +1,169 @@
 # Next Stage
 
-This repository is now past the extraction/backfill phase. The next stage is QA, enrichment, and preparation for teaching use.
+This repository is now past the extraction/backfill phase. The next stage is QA,
+reconciliation, enrichment, and curation for teaching use.
 
-## Teaching-pearls layer (added July 2026)
+## Current State
 
-A deterministic pearls layer now sits on top of the trial extraction:
+- `555` Curbsiders episodes are scraped and marked completed.
+- `6793` model-extracted trial/evidence mentions are stored in `data/trials.json`.
+- `6243` model-extracted canonical records are merged with the deterministic
+  show-note hyperlink layer into `6785` published evidence records in
+  `docs/data/trials.json`.
+- `data/show_note_evidence.json` contains `5887` canonical cited evidence links
+  from actual show-note hyperlinks, representing `9225` hyperlink mentions across
+  `525` episodes.
+- Of those show-note evidence records, `5345` match existing extracted records and
+  `542` are show-note-only records that the model extractor missed.
+- `2089` raw show-note pearls canonicalize to `2062` published pearls in
+  `docs/data/pearls.json`.
+- `372` canonical pearls have reviewed evidence links, and `471` evidence records
+  have reverse linked-pearl backlinks in the evidence browser.
+- Validation passes, with a soft warning for `7` vague citation labels that remain
+  a review queue.
 
-- `scripts/extract_pearls.py` pulls verbatim pearls from the show-note `Pearls`
-  sections into `data/pearls.json` and links each to the episode's trial mentions.
-- `scripts/build_site.py` canonicalizes them into `docs/data/pearls.json`.
-- The site's default **Teaching pearls** view surfaces them with their evidence.
-- `scripts/ingest.py` is the incremental orchestrator for new episodes.
+## Core Architecture
 
-Open follow-ups for this layer: tune the pearl→trial link threshold in
-`pearl_utils.DEFAULT_MIN_LINK_SCORE`, and consider a reviewer pass over pearls
-whose linked evidence looks off-topic.
+### Evidence layer
 
-## Model-assisted evidence linking + adjudication (added July 2026)
+There are now two evidence sources:
 
-On top of the deterministic term-overlap linker, `scripts/link_pearls_evidence.py`
-asks a model which of an episode's own extracted trials support each pearl (grounded,
-verifiable, owner-gated — see the README). `845` pearls now carry model `evidence_links`.
+1. `data/trials.json`
+   Model-extracted episode-level evidence mentions, with summaries, study types,
+   topics, specialties, and episode context.
 
-- **Adjudication is per individual link.** `link_pearls_evidence.py adjudicate` sets a
-  per-link `review_status` (`approved`/`rejected`/`reset`) from CLI selectors or a
-  `--from-file` feedback list; `apply` drops rejected links while keeping their siblings.
-  This is the "capture user feedback and re-apply" loop.
+2. `data/show_note_evidence.json`
+   Deterministic inventory of likely clinical-evidence hyperlinks actually present
+   in show notes. Stable keys are based on PMID, DOI, PMCID, NCT ID, or normalized
+   URL. This layer is the source of truth for "what Curbsiders linked to."
 
-`evidence_links` now flows through: `pearl_utils.attach_evidence_links` merges the
-`pearls_linked.json` sidecar onto `data/pearls.json` by (episode_url, pearl_key) before
-canonicalization (so pearls added since the last `apply` run just show no links yet,
-rather than breaking the build), and `build_canonical_pearls` merges links across
-episodes per trial, keeping the highest-ranked (`direct` > `background`, then confidence)
-when the same pearl/trial pair recurs. The Teaching-pearls view now renders an "Evidence
-for this pearl" block with support/confidence badges and the model's rationale, ahead of
-any remaining term-overlap-only citations under "Also cited in this episode"; the
-"With evidence only" filter and pearl search now also account for `evidence_links`.
+`scripts/build_site.py` merges both into `docs/data/trials.json`. Records can carry
+`show_note_citations`, `source_layers`, and `linked_pearls`.
 
-Open follow-ups: work a first review queue over the `129` low-confidence / background
-links (the adjudication tooling exists in `link_pearls_evidence.py` but hasn't been run
-against real reviewer judgment yet).
+### Pearl layer
 
-## Local ingest automation (added July 2026)
+`scripts/extract_pearls.py` deterministically extracts verbatim show-note pearls
+into `data/pearls.json`. Its `supporting_citations` field is only a term-overlap
+audit aid; it is not treated as reviewed teaching evidence.
 
-The [`automation/`](automation/) directory schedules the incremental ingest:
-`run_ingest.sh` (locked, logged wrapper), a launchd template, and install docs. A run
-with no new episode spends ~0 tokens. Linking stays manual/owner-gated.
+`scripts/link_pearls_evidence.py` owns the model-assisted, owner-gated
+pearl-to-evidence sidecar:
 
-## Episode-level pearl coverage (added July 2026 — was a "next candidate" below)
+- Draft links live in `data/pearl_evidence_links.json`.
+- Reviewed/published links are applied into `data/pearls_linked.json`.
+- `apply` publishes only record-approved, direct, non-low-confidence links by
+  default.
+- `build_site.py` canonicalizes the linked pearls and also repairs stale reviewed
+  canonical keys at publish time when they match current evidence records.
 
-`scripts/pearl_coverage.py` reveals the `301` episodes with no extracted pearls,
-annotated with transcript availability (`236` are transcript-backed and feedable to the
-candidate-pearl generator), and writes `data/pearls_coverage_gap.json`. The count also
-shows in `ingest.py --report`. This closes implementation candidate #3 below.
+### Browser behavior
 
-## Transcript corpus + candidate pearls (added July 2026)
+The static site now supports both directions:
 
-A full-episode transcript layer now backs the project as a context/search corpus,
-kept strictly separate from the auto-published verbatim pearl path:
+- `Teaching pearls` shows pearl -> reviewed evidence links.
+- `Evidence browser` shows evidence -> reviewed teaching pearl backlinks.
+- Show-note-only evidence records still appear in the evidence browser with source
+  links and episode backlinks, even when the model extractor did not summarize
+  them originally.
 
-- `scripts/fetch_transcripts.py` harvests the `94` official (human/CME-reviewed)
-  transcript files the show links from its notes; `scripts/harvest_youtube_captions.py`
-  fills the remaining gaps with the channel's YouTube auto-captions (`354` episodes,
-  tagged `ai_generated`). Both write `data/transcripts.json` and spend no model tokens.
-  `scripts/ingest.py` now runs the official-transcript harvest as an incremental phase.
-- `scripts/generate_candidate_pearls.py` is an **owner-gated** pass that drafts extra
-  teaching pearls from transcripts. Every candidate carries a verbatim `supporting_quote`
-  that is deterministically checked against the transcript; unsupported ones are dropped.
-  Nothing reaches `data/pearls.json` — candidates land in `data/candidate_pearls.json`,
-  and a human must approve + `promote` them into `data/approved_pearls.json`.
+## Recommended QA Sequence
 
-Open follow-ups: review the seeded candidate batch in `data/candidate_pearls.json`,
-decide whether/how approved transcript pearls surface in the site, and consider
-widening candidate generation beyond official transcripts once fidelity is trusted.
+1. Review newest episodes first.
+   Start with episodes `530` through `521`. Compare show notes, `data/trials.json`,
+   `data/show_note_evidence.json`, and the published `docs/data/trials.json`.
 
-## Current baseline
+2. Reconcile show-note-only records.
+   The `542` `source_layers: ["show_notes_links"]` records are the highest-value
+   gap queue. Decide whether each should remain source-only, merge into an existing
+   canonical record, or be enriched with a better PMID/DOI/title.
 
-- Full scrape completed in [data/episodes.json](data/episodes.json)
-- Full extraction completed in [data/trials.json](data/trials.json)
-- Full canonical rebuild completed in [docs/data/trials.json](docs/data/trials.json)
-- Per-episode processing state recorded in [data/extraction_state.json](data/extraction_state.json)
+3. Review evidence records linked to pearls.
+   The browser now surfaces `471` evidence records with linked pearls. These are
+   high leverage because they directly affect teaching workflows.
 
-## Immediate objectives
+4. Tighten `study_type = "other"`.
+   Current published distribution still has many `other` records. Some are real
+   background sources, but many should likely become guideline, observational,
+   RCT, systematic review, or meta-analysis after review.
 
-1. Verify extraction quality on a human-reviewable sample.
-2. Identify where canonicalization merged distinct studies incorrectly or failed to merge obvious duplicates.
-3. Decide what additional metadata is required for teaching use.
-4. Define a curation workflow for ongoing updates.
+5. Fix vague citation labels.
+   `scripts/validate_repository.py` warns about 7 citation labels that are not
+   recognizable to a clinician. This is a small, concrete cleanup queue.
 
-## Recommended QA sequence
+6. Inspect canonical merge quality.
+   Look especially at records with high `mention_count`, multiple URLs, or both a
+   PubMed and publisher/DOI representation.
 
-1. Review the 10 most recent episodes first.
+## Owner-Gated Queues
 
-   Use [data/trials.json](data/trials.json) and filter by `episode_number` `530` down through `521`.
+### Pearl evidence adjudication
 
-2. Compare mention-level extraction to canonical site records.
-
-   For a few recent episodes, check that every important cited trial appears both:
-   - as an episode-level mention in [data/trials.json](data/trials.json)
-   - as a canonical trial record in [docs/data/trials.json](docs/data/trials.json)
-
-3. Inspect zero-trial episodes.
-
-   There are currently `22` completed episodes with no extracted trial mentions. These may be legitimate zero-trial episodes, but they are worth a quick sanity pass before treating the repository as complete.
-
-4. Inspect `study_type = "other"`.
-
-   The canonical distribution still contains many `other` labels. This likely marks the highest-yield prompt-improvement area if the goal is a stronger teaching dataset.
-
-## Suggested enrichment fields
-
-If the repository is intended for durable future teaching use, the most useful next fields are:
-
-- `pmid`
-- `doi`
-- `nct_id`
-- `journal`
-- `first_author`
-- `publication_type` or a tightened `study_type`
-- `key_outcome`
-- `population`
-- `intervention`
-- `comparator`
-
-These do not need to be added in one pass, but `pmid` and `nct_id` are the highest-value identifiers for canonicalization.
-
-## Decision points before more coding
-
-Before changing the schema again, decide:
-
-- Is this mainly a “what trials were mentioned on Curbsiders?” archive?
-- Or is it becoming a structured educational trial library?
-
-If it is the second, the next coding phase should shift from extraction to metadata enrichment and reviewer tooling.
-
-## Good next implementation candidates
-
-If QA finds the extraction acceptable, the next technical work should probably be one of these:
-
-1. PubMed enrichment pass keyed by URL/title/label.
-2. Reviewer report for suspicious merges, missing identifiers, and `other` study types.
-3. ~~Episode-level QA dashboard or CSV export for manual review.~~ Done: `scripts/pearl_coverage.py` (episodes-without-pearls report).
-4. Improved site filters for specialty, study type, and identifier presence.
-
-## Commands you may still need
-
-Rebuild canonical dataset after any changes to [data/trials.json](data/trials.json):
+Use:
 
 ```bash
+python scripts/link_pearls_evidence.py report
+python scripts/link_pearls_evidence.py adjudicate --episode <N> --trial "<label>" --reject --note "off-topic"
+python scripts/link_pearls_evidence.py adjudicate --episode <N> --record --approve --note "checked vs show notes"
+python scripts/link_pearls_evidence.py apply
 python scripts/build_site.py
 ```
 
-Check batch status:
+Current state: `398` model-drafted records have record-level approval and are
+eligible for publication under the strict `apply` defaults; `447` remain pending.
+
+### Candidate transcript pearls
+
+`data/candidate_pearls.json` contains `3016` quote-verified candidates, all still
+pending review. Nothing is promoted into `data/pearls.json` unless a reviewer
+approves candidates and runs the promotion/merge steps described in `README.md`.
+
+### Research screening
+
+`data/trial_screening.json` currently holds a 23-record pilot batch, all pending.
+No PICO/clinical-bottom-line screening is published until records are approved and
+applied into `data/trial_screening_approved.json`.
+
+## Commands For Handoff
+
+Rebuild deterministic artifacts:
 
 ```bash
-python scripts/extract_trials_batch.py status --batch-dir data/batches/<batch_name>
+python scripts/extract_show_note_evidence.py
+python scripts/build_site.py
 ```
 
-Download a completed batch:
+Validate:
 
 ```bash
-python scripts/extract_trials_batch.py download --batch-dir data/batches/<batch_name>
-```
-
-Run tests:
-
-```bash
-python -m unittest discover -s tests
 python -m py_compile scripts/*.py tests/*.py
+python -m unittest discover -s tests
+python scripts/validate_repository.py
 ```
+
+Preview site locally:
+
+```bash
+python -m http.server 8765 --directory docs
+```
+
+Run incremental ingest:
+
+```bash
+python scripts/ingest.py --dry-run
+python scripts/ingest.py
+```
+
+## Publishing
+
+GitHub Pages serves the `docs/` directory from `main`. A push to `main` that changes
+`docs/` should redeploy the public site automatically.
+
+Before handing off, confirm:
+
+```bash
+git status --short
+python scripts/validate_repository.py
+```
+
+The expected validation state is pass, with the current soft warning about 7 vague
+labels unless that review queue has been cleaned up.

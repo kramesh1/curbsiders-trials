@@ -12,8 +12,9 @@ Phases:
   3. extract     run the trial extractor on pending episodes only
   4. enrich      deterministically add segments + trial detail + category
   5. pearls      re-derive data/pearls.json (deterministic, cheap)
-  6. site        rebuild docs/data/*.json
-  7. validate    run repository validation
+  6. evidence    harvest actual evidence hyperlinks from show notes
+  7. site        rebuild docs/data/*.json
+  8. validate    run repository validation
 
 Usage:
   python scripts/ingest.py                      # full incremental run (openai)
@@ -245,14 +246,15 @@ def main() -> int:
     else:
         print("\nNo pending episodes; skipping extraction.")
 
-    # Phase 3 + 4 + 5: always rebuild the deterministic layers so segments,
-    # trial detail, category, and linking pick up any new trials or show-note
-    # edits. All three are pure functions of episodes.json + trials.json.
+    # Phase 3 + 4 + 5 + 6: always rebuild the deterministic layers so segments,
+    # trial detail, category, pearls, and show-note evidence links pick up any
+    # new trials or show-note edits. These are pure functions of local JSON.
     python_step("enrich", "enrich_trials.py")
     python_step("pearls", "extract_pearls.py")
+    python_step("show-note-evidence", "extract_show_note_evidence.py")
     python_step("site", "build_site.py")
 
-    # Phase 5: validate.
+    # Phase 8: validate.
     try:
         python_step("validate", "validate_repository.py")
     except RuntimeError as error:

@@ -71,7 +71,8 @@ DEFAULT_MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8000
 
 SYSTEM_PROMPT = """\
-You are a medical librarian deciding which studies support a specific teaching point.
+You are a medical librarian and evidence-based-medicine educator deciding which studies \
+support a specific teaching point for bedside teaching.
 
 You are given ONE podcast episode's teaching pearls and the list of clinical studies \
 already extracted from that same episode. For each pearl, choose the studies (if any) \
@@ -83,11 +84,20 @@ you may only choose from the numbered list provided.
 - Link a study to a pearl only when the study is evidence FOR that pearl's claim. Sharing \
 a topic is NOT enough -- a hypertension trial does not support every hypertension pearl. \
 When unsure, leave the pearl unlinked; a missing link is better than a wrong one.
+- Prefer high-quality, teaching-worthy evidence: randomized trials, meta-analyses, \
+systematic reviews, and guidelines, or unusually important observational evidence when \
+randomization is not realistic. Do not link low-value background articles just because \
+they were cited in the same section.
+- The ideal link explains a practice-changing idea: a threshold, drug choice, diagnostic \
+strategy, outcome tradeoff, duration, harm signal, or guideline recommendation a clinician \
+could teach. If the study does not support a practice implication, omit it.
 - Mark "support": "direct" when the study's result is the basis for the claim (a threshold, \
 a drug choice, an outcome). Mark "support": "background" when the study is related and \
-informative but not the direct basis. Omit anything weaker.
-- A pearl may link to zero, one, or several studies. Most pearls link to zero or one.
-- Give a one-line rationale grounded in what the study is, and a confidence.
+informative but not the direct basis. Use "background" sparingly; most background-only \
+citations should be omitted.
+- A pearl may link to zero, one, or several studies. Most pearls should link to zero or one.
+- Give a one-line rationale grounded in what the study is and why it changes practice, and \
+a confidence.
 
 Return ONLY a JSON object of the form:
   {"links": [{"pearl": <int>, "trial": <int>, "support": "direct|background", \
@@ -194,9 +204,12 @@ def verify_links(raw_links, pearls: list[dict], pool: list[dict]) -> tuple[dict[
             continue
         trial = pool[ti]
         canonical_key = trial_canonical_key(trial)
-        citation = _citation_view(trial, canonical_key)
         support = link.get("support")
-        citation["support"] = support if support in ("direct", "background") else "direct"
+        if support not in ("direct", "background"):
+            dropped += 1
+            continue
+        citation = _citation_view(trial, canonical_key)
+        citation["support"] = support
         confidence = link.get("confidence")
         citation["confidence"] = confidence if confidence in ("high", "medium", "low") else None
         citation["rationale"] = clean_text(link.get("rationale"))
@@ -552,12 +565,46 @@ def cmd_report(args) -> int:
     link_adjud = Counter(link_status(l, r) for r in links for l in r["links"])
     direct = sum(1 for r in links for l in r["links"] if l.get("support") == "direct")
     total_links = sum(len(r["links"]) for r in links)
+    approved_records = [r for r in links if r.get("review_status") == "approved"]
+    current_pearl_keys = {
+        (pearl.get("episode_url"), _pearl_dedupe_key(pearl.get("pearl", "")))
+        for pearl in pearls
+    }
+    publishable_records = set()
+    publishable_links = []
+    current_publishable_records = set()
+    current_publishable_links = []
+    for record in approved_records:
+        for link in record.get("links", []):
+            if (
+                link_status(link, record) != "rejected"
+                and link.get("support") == "direct"
+                and link.get("confidence") != "low"
+            ):
+                publishable_links.append(link)
+                record_key = (record["episode_url"], record["pearl_key"])
+                publishable_records.add(record_key)
+                if record_key in current_pearl_keys:
+                    current_publishable_links.append(link)
+                    current_publishable_records.add(record_key)
+    quality_excluded = [
+        link
+        for record in approved_records
+        for link in record.get("links", [])
+        if link_status(link, record) != "rejected"
+        and (link.get("support") != "direct" or link.get("confidence") == "low")
+    ]
 
     print("=== Pearl evidence linking ===")
     print(f"  Episodes processed:        {len(covered_episodes)}")
     print(f"  Pearls the model linked:   {len(links)}  ({total_links} links, {direct} direct)")
     print(f"  Review status (per pearl): {dict(status)}")
     print(f"  Link adjudication:         {dict(link_adjud)}")
+    print(f"  Publishable by default:    {len(publishable_links)} direct/non-low link(s) "
+          f"from {len(publishable_records)} approved pearl record(s)")
+    print(f"  Match current pearls:      {len(current_publishable_links)} link(s) "
+          f"from {len(current_publishable_records)} approved pearl record(s)")
+    print(f"  Approved but quality-held: {len(quality_excluded)} background/low-confidence link(s)")
     print("\n  Over the processed episodes, vs the term-overlap baseline:")
     print(f"    pearls linked by baseline: {det_linked}")
     print(f"    pearls linked by model:    {model_linked}")
@@ -588,6 +635,7 @@ def cmd_apply(args) -> int:
 
     applied = 0
     dropped_links = 0
+    dropped_quality = 0
     out = []
     for pearl in pearls:
         pearl = dict(pearl)
@@ -597,6 +645,13 @@ def cmd_apply(args) -> int:
             # rejected. A pearl whose links are all rejected simply gets none.
             kept = [l for l in rec["links"] if link_status(l, rec) != "rejected"]
             dropped_links += len(rec["links"]) - len(kept)
+            quality_kept = [
+                link for link in kept
+                if (args.include_background or link.get("support") == "direct")
+                and (args.include_low_confidence or link.get("confidence") != "low")
+            ]
+            dropped_quality += len(kept) - len(quality_kept)
+            kept = quality_kept
             if kept:
                 pearl["evidence_links"] = kept
                 applied += 1
@@ -606,6 +661,9 @@ def cmd_apply(args) -> int:
     print(f"Applied model links to {applied} pearl(s) -> {LINKED_PEARLS_FILE}")
     if dropped_links:
         print(f"Dropped {dropped_links} rejected link(s) during apply.")
+    if dropped_quality:
+        print(f"Dropped {dropped_quality} background/low-confidence link(s) during apply "
+              f"(pass --include-background/--include-low-confidence to keep them).")
     print(f"(data/pearls.json is left untouched by design.)")
     return 0
 
@@ -827,6 +885,10 @@ def main() -> int:
     a = sub.add_parser("apply", help="Merge reviewed links into data/pearls_linked.json")
     a.add_argument("--include-pending", action="store_true",
                    help="Also apply links still marked pending (default: approved only)")
+    a.add_argument("--include-background", action="store_true",
+                   help="Also publish reviewed background-support links (default: direct evidence only)")
+    a.add_argument("--include-low-confidence", action="store_true",
+                   help="Also publish reviewed low-confidence links (default: drop low confidence)")
     a.set_defaults(func=cmd_apply)
 
     d = sub.add_parser("adjudicate",
