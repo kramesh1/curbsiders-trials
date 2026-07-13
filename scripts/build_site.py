@@ -10,25 +10,19 @@ from collections import Counter
 from pathlib import Path
 
 try:
-    from scripts.trial_utils import build_canonical_trial_records
+    from scripts.evidence_repository import build_evidence_repository
     from scripts.pearl_utils import attach_evidence_links, attach_feedback, build_canonical_pearls
     from scripts.pubmed_utils import attach_screening
     from scripts.show_note_evidence import (
-        annotate_show_note_matches,
         attach_pearl_backlinks,
-        build_show_note_evidence_records,
-        merge_show_note_evidence,
         repair_pearl_evidence_links,
     )
 except ImportError:
-    from trial_utils import build_canonical_trial_records
+    from evidence_repository import build_evidence_repository
     from pearl_utils import attach_evidence_links, attach_feedback, build_canonical_pearls
     from pubmed_utils import attach_screening
     from show_note_evidence import (
-        annotate_show_note_matches,
         attach_pearl_backlinks,
-        build_show_note_evidence_records,
-        merge_show_note_evidence,
         repair_pearl_evidence_links,
     )
 
@@ -54,25 +48,25 @@ def main():
         trials = json.load(f)
     print(f"Loaded {len(trials)} trial mentions")
 
-    canonical = build_canonical_trial_records(trials)
-    print(f"After canonicalization: {len(canonical)} unique trial records")
+    episodes = []
+    show_note_stats = None
+    if EPISODES_FILE.exists():
+        with open(EPISODES_FILE) as f:
+            episodes = json.load(f)
+    canonical, annotated_show_note_records, show_note_stats = build_evidence_repository(trials, episodes)
+    print(f"After canonicalization + show-note merge: {len(canonical)} unique evidence records")
+    if episodes:
+        with open(SHOW_NOTE_EVIDENCE_FILE, "w") as f:
+            json.dump(annotated_show_note_records, f, ensure_ascii=False, separators=(",", ":"))
 
+    # Screening is attached after the show-note merge so show-note-only evidence
+    # is part of the same screening universe as model-extracted citations.
     screened_count = 0
     if SCREENING_APPROVED_FILE.exists():
         with open(SCREENING_APPROVED_FILE) as f:
             screening_records = json.load(f)
         canonical = attach_screening(canonical, screening_records)
         screened_count = sum(1 for trial in canonical if trial.get("grounded_in"))
-
-    show_note_stats = None
-    if EPISODES_FILE.exists():
-        with open(EPISODES_FILE) as f:
-            episodes = json.load(f)
-        show_note_records = build_show_note_evidence_records(episodes)
-        annotated_show_note_records = annotate_show_note_matches(show_note_records, canonical)
-        with open(SHOW_NOTE_EVIDENCE_FILE, "w") as f:
-            json.dump(annotated_show_note_records, f, ensure_ascii=False, separators=(",", ":"))
-        canonical, show_note_stats = merge_show_note_evidence(canonical, annotated_show_note_records)
 
     canonical_pearls, flagged_count = build_pearls_site(write_output=False)
     repaired_pearl_links = 0

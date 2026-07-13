@@ -19,9 +19,16 @@ const PUBMED_OPTIONS = [
   { key: 'without', label: 'Without source link' },
 ];
 
-// Update this after deploying worker/ (see README's visitor-feedback section) --
-// it's a public endpoint meant to be called from the browser, safe to embed.
-const FEEDBACK_ENDPOINT = 'https://curbsiders-feedback.YOUR_SUBDOMAIN.workers.dev/feedback';
+// Feedback is opt-in. Set <meta name="curbsiders-feedback-endpoint" content="https://…/feedback">
+// only after the Worker and D1 database are deployed and tested.
+const FEEDBACK_ENDPOINT = (
+  document.querySelector('meta[name="curbsiders-feedback-endpoint"]')?.content || ''
+).trim();
+
+function feedbackEnabled() {
+  return /^https:\/\/[^\s]+\/feedback(?:\?.*)?$/.test(FEEDBACK_ENDPOINT)
+    && !/YOUR_|REPLACE_|example/i.test(FEEDBACK_ENDPOINT);
+}
 
 const FEEDBACK_REASONS = [
   { key: 'inaccurate', label: "Inaccurate / doesn't match the source" },
@@ -128,7 +135,9 @@ async function init() {
   renderFilterControls();
   renderPearlsView();
   wireControls();
-  initFeedbackModal();
+  if (feedbackEnabled()) {
+    initFeedbackModal();
+  }
   applyFilters();
   applyPearlFilters();
 }
@@ -336,7 +345,7 @@ function renderHeroStats() {
     </div>
     <div class="stat-card">
       <span class="stat-value">${mentions.toLocaleString()}</span>
-      <span class="stat-label">trial mentions</span>
+      <span class="stat-label">citation occurrences</span>
     </div>
     <div class="stat-card">
       <span class="stat-value">${episodes.toLocaleString()}</span>
@@ -612,6 +621,9 @@ function initFeedbackModal() {
 }
 
 function openFeedbackModal(context) {
+  if (!feedbackEnabled()) {
+    return;
+  }
   feedbackContext = context;
   const overlay = document.getElementById('feedback-modal-overlay');
   const form = overlay.querySelector('.feedback-form');
@@ -1091,10 +1103,14 @@ function renderPearlsView() {
     <section class="pearls-summary">
       <div>
         <p class="section-kicker">Teaching layer</p>
-        <h3>Quick, quotable teaching pearls with reviewed clinical evidence.</h3>
+        <h3>${linkedCount
+          ? 'Quick, quotable teaching pearls with reviewed clinical evidence.'
+          : 'Quick, quotable teaching pearls ready for evidence review.'}</h3>
         <p>
-          Verbatim clinician takeaways pulled from Curbsiders show notes. Evidence links shown here
-          are reviewer-approved connections to practice-changing trials, guidelines, and reviews.
+          Verbatim clinician takeaways pulled from Curbsiders show notes.
+          ${linkedCount
+            ? 'Evidence links shown here are attributable, reviewer-approved connections to trials, guidelines, and reviews.'
+            : 'Model-suggested evidence links are currently withheld until an attributable human review is completed.'}
         </p>
       </div>
       <div class="pearls-metrics">
@@ -1258,6 +1274,9 @@ function flagSummaryTitle(flagSummary) {
 }
 
 function flagControlHTML(targetType, pearl, canonicalKey) {
+  if (!feedbackEnabled()) {
+    return '';
+  }
   if (hasFlaggedAlready(pearl.pearl_key, canonicalKey)) {
     return '<span class="flag-done">✓ Flagged</span>';
   }
@@ -1355,7 +1374,7 @@ function pearlCardHTML(pearl) {
 
   return `
     <article class="pearl-card" data-pearl-key="${escAttr(pearl.pearl_key)}">
-      <p class="pearl-text">${esc(pearl.pearl)}</p>
+      <p class="pearl-text">${renderInlineMarkdown(pearl.pearl)}</p>
       <div class="pearl-tags">${segments}${topics}${specialties}</div>
       <div class="pearl-actions">
         ${pearlFlagSummary}
@@ -1599,7 +1618,7 @@ function linkedPearlsHTML(trial) {
       <p class="linked-pearls-title">Reviewed teaching pearls linked to this evidence</p>
       ${pearls.slice(0, 4).map(pearl => `
         <div class="linked-pearl-row">
-          <p>${esc(pearl.pearl || '')}</p>
+          <p>${renderInlineMarkdown(pearl.pearl || '')}</p>
           <div class="linked-pearl-meta">
             ${pearl.support ? `<span class="support-badge support-${esc(pearl.support)}">${pearl.support === 'direct' ? 'Direct evidence' : 'Background'}</span>` : ''}
             ${pearl.confidence ? `<span class="confidence-badge confidence-${esc(pearl.confidence)}">${cap(pearl.confidence)} confidence</span>` : ''}
@@ -1849,6 +1868,46 @@ function esc(value) {
 
 function escAttr(value) {
   return esc(value).replace(/'/g, '&#39;');
+}
+
+function renderInlineMarkdown(value) {
+  // Show notes frequently use Markdown links inside otherwise plain pearl
+  // text. Render only that one construct; escape every text fragment and
+  // accept only absolute HTTP(S) targets so arbitrary HTML never reaches the
+  // page. The small scanner handles URLs containing balanced parentheses.
+  const text = String(value ?? '');
+  const opener = /\[([^\]]+)\]\((https?:\/\/)/gi;
+  const parts = [];
+  let cursor = 0;
+  let match;
+
+  while ((match = opener.exec(text)) !== null) {
+    const urlStart = match.index + match[0].length - match[2].length;
+    let depth = 1;
+    let end = urlStart;
+    for (; end < text.length; end += 1) {
+      if (text[end] === '(') {
+        depth += 1;
+      } else if (text[end] === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          break;
+        }
+      }
+    }
+    if (depth !== 0) {
+      break;
+    }
+
+    const url = text.slice(urlStart, end);
+    parts.push(esc(text.slice(cursor, match.index)));
+    parts.push(`<a href="${escAttr(safeUrl(url))}" target="_blank" rel="noopener">${esc(match[1])}</a>`);
+    cursor = end + 1;
+    opener.lastIndex = cursor;
+  }
+
+  parts.push(esc(text.slice(cursor)));
+  return parts.join('');
 }
 
 function safeUrl(value) {

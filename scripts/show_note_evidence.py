@@ -358,7 +358,7 @@ def build_trial_alias_map(canonical_trials: list[dict]) -> dict[str, str]:
         canonical_key = trial.get("canonical_key")
         if not canonical_key:
             continue
-        for alias in trial_aliases(trial):
+        for alias in sorted(trial_aliases(trial)):
             aliases.setdefault(alias, canonical_key)
     return aliases
 
@@ -378,11 +378,11 @@ def trial_aliases(trial: dict) -> set[str]:
 
 
 def match_show_note_record(record: dict, alias_map: dict[str, str]) -> str | None:
-    aliases = {record.get("evidence_key")}
-    for url in record.get("urls", []) or []:
-        aliases.add(f"url|{normalize_evidence_url(url)}")
-        aliases.add(evidence_identity_key(record.get("citation_label"), url))
-    for alias in aliases:
+    aliases = [record.get("evidence_key")]
+    for url in sorted(record.get("urls", []) or []):
+        aliases.append(evidence_identity_key(record.get("citation_label"), url))
+        aliases.append(f"url|{normalize_evidence_url(url)}")
+    for alias in dict.fromkeys(aliases):
         if alias and alias in alias_map:
             return alias_map[alias]
     return None
@@ -561,14 +561,14 @@ def build_trial_label_map(canonical_trials: list[dict]) -> dict[str, str]:
 
 
 def match_pearl_link(link: dict, alias_map: dict[str, str], label_map: dict[str, str]) -> str | None:
-    aliases = {link.get("canonical_key")}
+    aliases = [link.get("canonical_key")]
     url = normalize_evidence_url(link.get("pubmed_url"))
     if url:
-        aliases.add(f"url|{url}")
+        aliases.append(f"url|{url}")
     identity = evidence_identity_key(link.get("citation_label"), link.get("pubmed_url"))
     if identity:
-        aliases.add(identity)
-    for alias in aliases:
+        aliases.append(identity)
+    for alias in dict.fromkeys(aliases):
         if alias and alias in alias_map:
             return alias_map[alias]
 

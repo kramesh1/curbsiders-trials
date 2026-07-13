@@ -1,6 +1,6 @@
 [
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/18786971",
+    "canonical_key": "pmid|18786971",
     "citation_label": "Sofi et al 2008",
     "grounded_in": "pmc_fulltext",
     "pmid": "18786971",
@@ -16,7 +16,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/21097651",
+    "canonical_key": "pmid|21097651",
     "citation_label": "Fung et al 2010",
     "grounded_in": "pubmed_abstract",
     "pmid": "21097651",
@@ -32,7 +32,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/19153406",
+    "canonical_key": "pmid|19153406",
     "citation_label": "Krantz 2009",
     "grounded_in": "pubmed_abstract",
     "pmid": "19153406",
@@ -48,7 +48,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/31053510",
+    "canonical_key": "pmid|31053510",
     "citation_label": "Sun et al 20020",
     "grounded_in": "pubmed_abstract",
     "pmid": "31053510",
@@ -64,7 +64,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/37891630",
+    "canonical_key": "pmid|37891630",
     "citation_label": "Frank 2023",
     "grounded_in": "pmc_fulltext",
     "pmid": "37891630",
@@ -80,7 +80,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/28487277",
+    "canonical_key": "pmid|28487277",
     "citation_label": "Kai et al 2017",
     "grounded_in": "pmc_fulltext",
     "pmid": "28487277",
@@ -96,7 +96,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/17344330",
+    "canonical_key": "pmid|17344330",
     "citation_label": "Fanoe 2007",
     "grounded_in": "pubmed_abstract",
     "pmid": "17344330",
@@ -112,7 +112,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/8842068",
+    "canonical_key": "pmid|8842068",
     "citation_label": "Key et al 1996",
     "grounded_in": "pubmed_abstract",
     "pmid": "8842068",
@@ -128,7 +128,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/37728091",
+    "canonical_key": "pmid|37728091",
     "citation_label": "Casey 2023",
     "grounded_in": "pubmed_abstract",
     "pmid": "37728091",
@@ -144,7 +144,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/23466047",
+    "canonical_key": "pmid|23466047",
     "citation_label": "Salehi-Abargouei et al 2013",
     "grounded_in": "pubmed_abstract",
     "pmid": "23466047",
@@ -160,7 +160,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/37589638",
+    "canonical_key": "pmid|37589638",
     "citation_label": "Maroto-Rodriguez et al 2024",
     "grounded_in": "pubmed_abstract",
     "pmid": "37589638",
@@ -176,7 +176,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/9099655",
+    "canonical_key": "pmid|9099655",
     "citation_label": "Appel et al 1997",
     "grounded_in": "pubmed_abstract",
     "pmid": "9099655",
@@ -192,7 +192,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/42091098",
+    "canonical_key": "pmid|42091098",
     "citation_label": "Cheng 2026",
     "grounded_in": "pubmed_abstract",
     "pmid": "42091098",
@@ -208,7 +208,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/22008705",
+    "canonical_key": "pmid|22008705",
     "citation_label": "Roe et al 2012",
     "grounded_in": "pmc_fulltext",
     "pmid": "22008705",
@@ -224,7 +224,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/39372369",
+    "canonical_key": "pmid|39372369",
     "citation_label": "Budoff et al. 2024",
     "grounded_in": "pmc_fulltext",
     "pmid": "39372369",
@@ -240,7 +240,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/30638909",
+    "canonical_key": "pmid|30638909",
     "citation_label": "Reynolds et al 2019",
     "grounded_in": "pubmed_abstract",
     "pmid": "30638909",
@@ -256,7 +256,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/31654357",
+    "canonical_key": "pmid|31654357",
     "citation_label": "Indaratna 2020",
     "grounded_in": "pubmed_abstract",
     "pmid": "31654357",
@@ -272,7 +272,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/40990306",
+    "canonical_key": "pmid|40990306",
     "citation_label": "Huo 2025",
     "grounded_in": "pubmed_abstract",
     "pmid": "40990306",
@@ -288,7 +288,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/40875233",
+    "canonical_key": "pmid|40875233",
     "citation_label": "Christine 2025",
     "grounded_in": "pmc_fulltext",
     "pmid": "40875233",
@@ -304,7 +304,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/40773194",
+    "canonical_key": "pmid|40773194",
     "citation_label": "Cohen 2025",
     "grounded_in": "pmc_fulltext",
     "pmid": "40773194",
@@ -320,7 +320,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/40760540",
+    "canonical_key": "pmid|40760540",
     "citation_label": "Guarino et al 2025",
     "grounded_in": "pmc_fulltext",
     "pmid": "40760540",
@@ -336,7 +336,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/24599882",
+    "canonical_key": "pmid|24599882",
     "citation_label": "Schwingshackl and Hoffmann 2014",
     "grounded_in": "pubmed_abstract",
     "pmid": "24599882",
@@ -352,7 +352,7 @@
     "review_status": "pending"
   },
   {
-    "canonical_key": "pubmed|https://pubmed.ncbi.nlm.nih.gov/36990505",
+    "canonical_key": "pmid|36990505",
     "citation_label": "Karam et al 2023",
     "grounded_in": "pmc_fulltext",
     "pmid": "36990505",

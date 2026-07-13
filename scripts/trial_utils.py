@@ -1,6 +1,6 @@
 import re
 from collections import Counter
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 VALID_SPECIALTY_TAGS = {
     "cardiology",
@@ -134,7 +134,45 @@ def normalize_year(value) -> int | None:
     return year if 1900 <= year <= 2100 else None
 
 
+PMID_URL_RE = re.compile(
+    r"(?:pubmed\.ncbi\.nlm\.nih\.gov/|(?:www\.)?ncbi\.nlm\.nih\.gov/pubmed/)(\d{4,9})",
+    re.IGNORECASE,
+)
+PMCID_RE = re.compile(r"\bPMC\d+\b", re.IGNORECASE)
+NCT_RE = re.compile(r"\bNCT\d{8}\b", re.IGNORECASE)
+DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
+
+
+def _host(parsed) -> str:
+    return parsed.netloc.lower().removeprefix("www.")
+
+
+def is_generic_evidence_url(url: str | None) -> bool:
+    """True for search/home URLs that cannot identify a single publication."""
+    cleaned = clean_text(url)
+    if not cleaned:
+        return True
+    parsed = urlparse(cleaned)
+    host = _host(parsed)
+    path = unquote(parsed.path or "").rstrip("/").lower()
+    fragment = unquote(parsed.fragment or "").lower()
+    if host == "pubmed.ncbi.nlm.nih.gov" and not re.fullmatch(r"/\d{4,9}", path):
+        return True
+    if host.endswith("ncbi.nlm.nih.gov") and path in {"", "/pubmed", "/pmc", "/pmc/articles"}:
+        return True
+    if host.endswith("clinicalkey.com") and not path and not fragment.startswith("!/content/"):
+        return True
+    if host in {"doi.org", "dx.doi.org", "clinicaltrials.gov"} and not path:
+        return True
+    return False
+
+
 def normalize_pubmed_url(url) -> str | None:
+    """Normalize an evidence URL and discard non-article landing/search URLs.
+
+    The historical name is retained for compatibility; callers use this for all
+    evidence URLs, not only PubMed.
+    """
     cleaned = clean_text(url)
     if not cleaned:
         return None
@@ -142,8 +180,39 @@ def normalize_pubmed_url(url) -> str | None:
     parsed = urlparse(cleaned)
     if not parsed.scheme or not parsed.netloc:
         return cleaned
-    path = parsed.path.rstrip("/")
-    return f"{parsed.scheme}://{parsed.netloc}{path}" if path else f"{parsed.scheme}://{parsed.netloc}"
+    host = _host(parsed)
+    path = unquote(parsed.path).rstrip("/")
+    fragment = parsed.fragment if host.endswith("clinicalkey.com") else ""
+    if fragment and not path:
+        path = "/"
+    normalized = urlunparse(("https", host, path, "", "", fragment))
+    return None if is_generic_evidence_url(normalized) else normalized
+
+
+def stable_evidence_identity(url: str | None) -> tuple[str, str] | None:
+    """Return an article-level identity, never a database home/search identity."""
+    cleaned = clean_text(url)
+    if not cleaned:
+        return None
+    decoded = unquote(cleaned)
+    pmid_match = PMID_URL_RE.search(decoded)
+    if pmid_match:
+        return ("pmid", pmid_match.group(1))
+    pmcid_match = PMCID_RE.search(decoded)
+    if pmcid_match:
+        return ("pmcid", pmcid_match.group(0).upper())
+    nct_match = NCT_RE.search(decoded)
+    if nct_match:
+        return ("nct", nct_match.group(0).upper())
+    doi_match = DOI_RE.search(decoded)
+    if doi_match:
+        return ("doi", doi_match.group(0).rstrip(").,;").lower())
+    normalized = normalize_pubmed_url(cleaned)
+    if normalized and not is_generic_evidence_url(normalized):
+        parsed = urlparse(normalized)
+        if parsed.path.rstrip("/") or parsed.fragment:
+            return ("url", normalized)
+    return None
 
 
 def extract_markdown_links(text: str) -> list[dict]:
@@ -351,9 +420,9 @@ def most_common_value(values, default=None):
 
 
 def trial_identity_key(trial: dict) -> tuple:
-    pubmed_url = normalize_pubmed_url(trial.get("pubmed_url"))
-    if pubmed_url:
-        return ("pubmed", pubmed_url)
+    source_identity = stable_evidence_identity(trial.get("pubmed_url"))
+    if source_identity:
+        return source_identity
 
     paper_title = normalize_key_text(trial.get("paper_title"))
     if paper_title:

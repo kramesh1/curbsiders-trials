@@ -72,7 +72,7 @@ python scripts/link_pearls_evidence.py report            # coverage + per-link a
 # 1. Reject links that don't hold up (preview with --dry-run first):
 python scripts/link_pearls_evidence.py adjudicate --episode 500 --trial "SPRINT" --reject --note "off-topic"
 # 2. Once you've checked the pearl's surviving links against the show notes, sign off the record:
-python scripts/link_pearls_evidence.py adjudicate --episode 500 --record --approve --note "checked vs show notes"
+python scripts/link_pearls_evidence.py adjudicate --episode 500 --record --approve --reviewer "<name>" --note "checked vs source and show notes"
 python scripts/link_pearls_evidence.py apply             # refresh data/pearls_linked.json
 ```
 
@@ -82,14 +82,11 @@ direct, non-low-confidence reviewed links; use `--include-background` or
 `--include-low-confidence` only for review/debug artifacts. Use `--reset` to undo a decision (per-link
 or, with `--record`, the whole record back to `pending`), or `--from-file feedback.json`
 to apply a batch of captured decisions (add `"scope": "record"` to an entry to sign off a
-record instead of a link). Rejected links are always dropped by `apply`, and only records
-you've explicitly marked `"approved"` are applied at all by default — `apply --include-pending` is
-available but bypasses that gate, so avoid it for anything headed to the public site.
+record instead of a link). Rejected links are always dropped by `apply`; there is no
+pending/auto-triaged publication bypass.
 
-As of the latest rebuild, `398` model-drafted records have record-level approval and are
-eligible for publication after the stricter `apply` filters. The remaining `447` records
-are still `pending`; treat them as unreviewed until they have actually been through the
-steps above.
+As of the latest rebuild, `398` model-drafted records are `auto_triaged` and `447` are
+`pending`. None is attributable human approval, so all are withheld from the public site.
 
 ## Local QA Commands
 
@@ -107,6 +104,6 @@ Run `build_site.py` after any change to `data/trials.json`; otherwise the browse
 ## Known Limitations
 
 - The extracted summaries are model-generated from show notes and need human review before being treated as authoritative.
-- Episode dates are currently missing from all canonical episode backlinks; the live show-note markup did not expose a parseable date, so the scraper left `date` empty. `needs_refresh()` no longer treats a missing date as a reason to re-fetch.
+- Episode dates are populated from official RSS for `432/558` cached pages; older/non-numbered archive entries remain unknown rather than guessed.
 - `study_type = "other"` remains overused and should be tightened during review.
 - Curbsiders show notes vary in citation detail, so not every record can be fully enriched without external lookup.

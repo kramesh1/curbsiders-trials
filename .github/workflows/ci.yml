@@ -22,5 +22,20 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests
 
+      - name: Compile Python sources
+        run: python -m compileall -q scripts tests
+
+      - name: Rebuild deterministic artifacts
+        run: |
+          python scripts/enrich_trials.py
+          python scripts/extract_pearls.py
+          python scripts/extract_show_note_evidence.py
+          python scripts/link_pearls_evidence.py apply
+          python scripts/screen_trials.py apply
+          python scripts/build_site.py
+
+      - name: Require reproducible artifacts
+        run: git diff --exit-code -- data docs
+
       - name: Validate repository data
         run: python scripts/validate_repository.py

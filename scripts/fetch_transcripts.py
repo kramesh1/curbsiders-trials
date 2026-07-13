@@ -1,7 +1,7 @@
 """
 Harvest official full-episode transcripts.
 
-Many Curbsiders episodes (~94/555, concentrated in the CME era ~#247-424) publish
+Many Curbsiders episodes (currently 95, concentrated in the CME era ~#247-424) publish
 an official transcript PDF/DOCX on the show's own WordPress uploads, linked from the
 show notes. These are human/CME-reviewed, so they are the highest-fidelity
 full-episode text obtainable — and, unlike YouTube auto-captions or Whisper, they
@@ -34,7 +34,7 @@ from io import BytesIO
 from pathlib import Path
 
 try:
-    from scripts.scrape_episodes import extract_transcript_url, fetch, make_session
+    from scripts.scrape_episodes import READER_BASE, extract_transcript_url, fetch, make_session
     from scripts.extract_trials import (
         DATA_DIR,
         EPISODES_FILE,
@@ -42,7 +42,7 @@ try:
         save_json,
     )
 except ImportError:
-    from scrape_episodes import extract_transcript_url, fetch, make_session
+    from scrape_episodes import READER_BASE, extract_transcript_url, fetch, make_session
     from extract_trials import DATA_DIR, EPISODES_FILE, load_json, save_json
 
 TRANSCRIPTS_FILE = DATA_DIR / "transcripts.json"
@@ -110,6 +110,27 @@ def extract_text(url: str, content: bytes) -> str:
     raise ValueError(f"Unsupported transcript file type: {url}")
 
 
+def fetch_transcript_text(session, url: str) -> tuple[str, str]:
+    """Return (text, transport), falling back to reader extraction behind the WAF."""
+    direct_error: Exception | None = None
+    try:
+        response = fetch(session, url)
+        if response is not None:
+            return extract_text(url, response.content), "website"
+    except Exception as exc:
+        direct_error = exc
+    if not READER_BASE:
+        raise RuntimeError(f"direct transcript fetch failed and reader fallback is disabled: {direct_error}")
+    reader_url = f"{READER_BASE}{url.removeprefix('https://').removeprefix('http://')}"
+    response = fetch(session, reader_url)
+    if response is None or "Markdown Content:" not in response.text:
+        raise RuntimeError(f"reader could not extract transcript after direct failure: {direct_error}")
+    text = clean_text(response.text.split("Markdown Content:", 1)[1])
+    if len(text) < 1000:
+        raise RuntimeError(f"reader transcript extraction was unexpectedly short ({len(text)} chars)")
+    return text, "jina_reader"
+
+
 def build_report(episodes: list[dict], transcripts: dict[str, dict]) -> str:
     from collections import Counter
 
@@ -162,13 +183,16 @@ def main() -> int:
         print(build_report(episodes, existing))
         return 0
 
-    # Episodes that link a transcript we don't already have text for.
+    # Episodes that link a transcript we don't already have official text for.
+    # A YouTube caption is a useful fallback, but it must never prevent a later
+    # official PDF/DOCX from replacing it.
     pending = []
     for episode in episodes:
         url = transcript_url_for(episode)
         if not url:
             continue
-        if not args.refresh and existing.get(episode["url"], {}).get("text"):
+        current = existing.get(episode["url"], {})
+        if not args.refresh and current.get("text") and current.get("source") == "official":
             continue
         pending.append((episode, url))
 
@@ -191,12 +215,7 @@ def main() -> int:
         ep_num = episode.get("episode_number")
         label = f"#{ep_num if ep_num is not None else '?'}"
         try:
-            resp = fetch(session, url)
-            if resp is None:
-                print(f"  [{i+1}/{len(pending)}] {label}: no page ({url})")
-                failed += 1
-                continue
-            text = extract_text(url, resp.content)
+            text, transport = fetch_transcript_text(session, url)
             if not text:
                 print(f"  [{i+1}/{len(pending)}] {label}: empty extraction ({url})")
                 failed += 1
@@ -208,12 +227,13 @@ def main() -> int:
                 "source": "official",
                 "ai_generated": looks_ai_generated(text),
                 "transcript_url": url,
+                "fetch_transport": transport,
                 "char_count": len(text),
                 "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "text": text,
             }
             fetched += 1
-            print(f"  [{i+1}/{len(pending)}] {label}: {len(text)} chars")
+            print(f"  [{i+1}/{len(pending)}] {label}: {len(text)} chars via {transport}")
 
             if fetched % 10 == 0:
                 save_json(TRANSCRIPTS_FILE, _sorted_rows(results))

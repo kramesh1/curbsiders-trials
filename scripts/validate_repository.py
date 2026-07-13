@@ -12,10 +12,15 @@ from collections import Counter
 from pathlib import Path
 
 try:
-    from scripts.trial_utils import VALID_SPECIALTY_TAGS
+    from scripts.trial_utils import (
+        VALID_SPECIALTY_TAGS,
+        is_generic_evidence_url,
+        normalize_key_text,
+        trial_identity_key,
+    )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from trial_utils import VALID_SPECIALTY_TAGS
+    from trial_utils import VALID_SPECIALTY_TAGS, is_generic_evidence_url, normalize_key_text, trial_identity_key
 
 NCT_RE = re.compile(r"^NCT\d{8}$")
 
@@ -51,6 +56,8 @@ SHOW_NOTE_EVIDENCE_FILE = DATA_DIR / "show_note_evidence.json"
 SITE_TRIALS_FILE = DOCS_DIR / "data" / "trials.json"
 SITE_PEARLS_FILE = DOCS_DIR / "data" / "pearls.json"
 INDEX_FILE = DOCS_DIR / "index.html"
+PEARL_LINKS_FILE = DATA_DIR / "pearl_evidence_links.json"
+CANDIDATE_PEARLS_FILE = DATA_DIR / "candidate_pearls.json"
 
 
 def load_json(path: Path):
@@ -107,6 +114,7 @@ def main() -> int:
 
     episode_urls = {episode.get("url") for episode in episodes if episode.get("url")}
     canonical_ids = [trial.get("id") for trial in canonical]
+    canonical_keys = [trial.get("canonical_key") for trial in canonical]
     records_without_identity = [
         trial
         for trial in canonical
@@ -129,6 +137,7 @@ def main() -> int:
     linked_records = sum(1 for trial in canonical if trial.get("pubmed_url"))
 
     require(len(canonical_ids) == len(set(canonical_ids)), "Canonical record IDs are not unique.", errors)
+    require(len(canonical_keys) == len(set(canonical_keys)), "Canonical trial keys are not unique.", errors)
     require(not records_without_identity, "Some canonical records have no label, title, or URL.", errors)
     require(not records_without_episodes, "Some canonical records have no episode backlinks.", errors)
     require(not records_with_bad_backlinks, "Some canonical records link to unknown episode URLs.", errors)
@@ -136,6 +145,35 @@ def main() -> int:
     require(
         state_counts.get("completed", 0) == len(episodes),
         "Completed extraction count does not match scraped episode count.",
+        errors,
+    )
+
+    generic_urls = [
+        trial.get("pubmed_url") for trial in trial_mentions
+        if trial.get("pubmed_url") and is_generic_evidence_url(trial.get("pubmed_url"))
+    ]
+    require(
+        not generic_urls,
+        f"Trial mentions contain {len(generic_urls)} database home/search URL(s) that cannot identify a paper.",
+        errors,
+    )
+
+    # A stable source identity may legitimately recur across episodes, but it must
+    # not collapse several plainly different paper titles into one record.
+    identity_titles: dict[tuple, set[str]] = {}
+    for trial in trial_mentions:
+        key = trial_identity_key(trial)
+        title = normalize_key_text(trial.get("paper_title"))
+        if key[0] != "fallback" and title:
+            identity_titles.setdefault(key, set()).add(title)
+    suspicious_collisions = {
+        "|".join(str(part) for part in key): sorted(titles)
+        for key, titles in identity_titles.items()
+        if len(titles) >= 3
+    }
+    require(
+        not suspicious_collisions,
+        f"Stable evidence identities merge three or more distinct paper titles: {list(suspicious_collisions)[:5]}",
         errors,
     )
 
@@ -197,6 +235,49 @@ def main() -> int:
     require(not show_note_bad_backlinks, "Some show-note evidence records link to unknown episode URLs.", errors)
     require(not show_note_bad_matches, "Some show-note evidence records match unknown canonical trial keys.", errors)
     require(not trial_bad_pearl_backlinks, "Some evidence records have malformed linked pearl backlinks.", errors)
+
+    malformed_pearls = [
+        pearl.get("pearl") for pearl in canonical_pearls
+        if re.search(r"(?:\(|\[|\b(?:and|or|the|a|an|to|of|for|with|in|on|by))\s*$", str(pearl.get("pearl", "")), re.I)
+    ]
+    require(not malformed_pearls, "Some pearls appear truncated or end with unmatched punctuation.", errors)
+
+    if PEARL_LINKS_FILE.exists():
+        pearl_links = load_json(PEARL_LINKS_FILE)
+        allowed_review_statuses = {"pending", "auto_triaged", "approved", "rejected"}
+        bad_review_statuses = [
+            row.get("review_status") for row in pearl_links
+            if row.get("review_status") not in allowed_review_statuses
+        ]
+        unattributed_approvals = [
+            row for row in pearl_links
+            if row.get("review_status") == "approved" and not row.get("reviewed_by")
+        ]
+        auto_approved = [
+            row for row in pearl_links
+            if row.get("review_status") == "approved"
+            and re.search(r"auto[- ]clear|spot[- ]check|automatic", row.get("review_note", ""), re.I)
+        ]
+        require(
+            not auto_approved,
+            "Automated/spot-checked pearl-link records are mislabeled as human-approved.",
+            errors,
+        )
+        require(not bad_review_statuses, "Pearl-link records contain invalid review statuses.", errors)
+        require(
+            not unattributed_approvals,
+            "Approved pearl-link records must name reviewed_by for attributable human sign-off.",
+            errors,
+        )
+
+    if CANDIDATE_PEARLS_FILE.exists():
+        candidates = load_json(CANDIDATE_PEARLS_FILE)
+        public_quotes = [row for row in candidates if row.get("supporting_quote")]
+        require(
+            not public_quotes,
+            "Public candidate_pearls.json contains transcript quotes; keep full quotes in data/private/ only.",
+            errors,
+        )
 
     # Classification / detail fields are soft: absence is legitimate (~28% of
     # episodes lack the structure). Only malformed *present* values fail the gate.

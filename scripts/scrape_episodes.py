@@ -1,47 +1,44 @@
+"""Discover Curbsiders episodes from the official RSS feed and refresh show notes.
+
+The WordPress sitemap is intermittently blocked by SiteGround and is not a safe
+automation boundary.  Audioboom's official Curbsiders RSS feed is used for
+discovery; existing older episodes remain in the cache.  Episode pages are fetched
+directly first and, when the public WAF serves an interstitial, through the optional
+Jina Reader proxy.  Empty or anomalously small discoveries fail loudly.
+
+Usage:
+  python scripts/scrape_episodes.py
+  python scripts/scrape_episodes.py --dry-run
+  python scripts/scrape_episodes.py --refresh-recent 20
 """
-Step 1: Scrape all Curbsiders episode URLs and show notes.
 
-thecurbsiders.com sits behind a WAF that returns HTTP 403 to ordinary HTTP
-clients (plain requests/curl) even with a browser User-Agent, because it
-fingerprints the TLS handshake. We use curl_cffi with Chrome impersonation,
-which presents a real Chrome TLS fingerprint and passes the block.
-
-Saves to data/episodes.json. Resumable — skips already-scraped episodes.
-
-Usage: python scripts/scrape_episodes.py
-"""
-
+import argparse
+import html
 import json
+import os
 import re
+import sys
 import time
+import unicodedata
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests as cr
 
 BASE_URL = "https://thecurbsiders.com"
-SITEMAP_INDEX = f"{BASE_URL}/sitemap_index.xml"
-IMPERSONATE = "chrome"  # TLS fingerprint that passes the site's WAF
+RSS_URL = "https://audioboom.com/channels/5034728.rss"
+READER_BASE = os.getenv("CURBSIDERS_READER_BASE", "https://r.jina.ai/http://")
+IMPERSONATE = "chrome"
 DATA_DIR = Path(__file__).parent.parent / "data"
 OUTPUT_FILE = DATA_DIR / "episodes.json"
-REQUEST_DELAY = 1.0  # seconds between requests
+REQUEST_DELAY = 1.0
 MAX_RETRIES = 3
+MIN_RSS_ITEMS = 100
+MIN_SHOW_NOTES_CHARS = 500
 
-# Episode posts live under /curbsiders-podcast/, in several historical forms:
-#   /curbsiders-podcast/530-nutrition-...        (recent)
-#   /curbsiders-podcast/endocrine/520-...        (nested under a specialty)
-#   /curbsiders-podcast/285                        (older, bare number)
-# Since we read the WordPress *post* sitemap (episodes only, no taxonomy),
-# we accept anything under that prefix and just drop embed/feed variants.
-EPISODE_URL_RE = re.compile(r"^https://thecurbsiders\.com/curbsiders-podcast/[^?#]+$")
-EXCLUDE_SUFFIXES = ("/embed", "/feed")
-
-# Many episodes (~94/555, concentrated in the CME era ~#247-424) link an official
-# transcript PDF/DOCX hosted on the Curbsiders' own WordPress uploads. These are the
-# highest-fidelity full-episode text available, so we capture the link here for the
-# transcript harvester (scripts/fetch_transcripts.py). A link qualifies when it is
-# on thecurbsiders.com, points at a .pdf/.docx, and says "transcript" in either the
-# link text or the filename. (Note: URLs appear with both http:// and https://.)
 TRANSCRIPT_LINK_RE = re.compile(
     r"\[([^\]]*)\]\((https?://(?:www\.)?thecurbsiders\.com/[^)]+\.(?:pdf|docx?))\)",
     re.IGNORECASE,
@@ -49,10 +46,6 @@ TRANSCRIPT_LINK_RE = re.compile(
 
 
 def extract_transcript_url(show_notes: str) -> str | None:
-    """Return the URL of the episode's official transcript file, or None.
-
-    Picks the first qualifying link; episodes carry at most one distinct transcript.
-    """
     for text, url in TRANSCRIPT_LINK_RE.findall(show_notes or ""):
         if "transcript" in text.lower() or "transcript" in url.lower():
             return url
@@ -63,200 +56,316 @@ def make_session() -> cr.Session:
     return cr.Session(impersonate=IMPERSONATE, timeout=30)
 
 
+def _blocked_response(resp: cr.Response) -> bool:
+    sample = (resp.text or "")[:5000].lower()
+    return resp.status_code == 202 or "sgcaptcha" in sample or "siteground" in sample and "captcha" in sample
+
+
 def fetch(session: cr.Session, url: str) -> cr.Response | None:
+    """Fetch a URL, returning None only for a real 404 and raising otherwise."""
+    last_error: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = session.get(url)
-            if resp.status_code == 200:
-                return resp
             if resp.status_code == 404:
                 return None
-            if resp.status_code in (403, 429, 503) and attempt < MAX_RETRIES:
-                time.sleep(5 * attempt)
-                continue
+            if resp.status_code == 200 and not _blocked_response(resp):
+                return resp
+            if _blocked_response(resp):
+                raise RuntimeError(f"source blocked by WAF (HTTP {resp.status_code})")
             resp.raise_for_status()
-        except Exception:
-            if attempt == MAX_RETRIES:
-                raise
-            time.sleep(3 * attempt)
-    return None
+            raise RuntimeError(f"unexpected HTTP {resp.status_code}")
+        except Exception as exc:
+            last_error = exc
+            if "blocked by WAF" in str(exc):
+                break
+            if attempt < MAX_RETRIES:
+                time.sleep(3 * attempt)
+    raise RuntimeError(f"failed to fetch {url}: {last_error}")
 
 
 def normalize_url(href: str) -> str:
     href = href.split("?", 1)[0].split("#", 1)[0]
     if not href.startswith("http"):
         href = BASE_URL + href
-    href = href.replace("http://", "https://")
-    return href.rstrip("/")
+    return href.replace("http://", "https://").rstrip("/")
 
 
-def locs_from_xml(xml: str) -> list[str]:
-    """Extract <loc> URLs from a sitemap, handling CDATA wrapping."""
-    return re.findall(r"<loc>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</loc>", xml)
+def extract_episode_number(title: str, url: str = "") -> int | None:
+    # Prefer an explicit #NNN in the title; URL digits can include years.
+    match = re.search(r"#(\d{1,4})\b", title or "")
+    if match:
+        return int(match.group(1))
+    for field in (title, url):
+        match = re.search(r"(?:^|/)(\d{1,4})(?:-|/|$)", field or "")
+        if match:
+            return int(match.group(1))
+    return None
 
 
-def discover_episode_urls(session: cr.Session) -> list[str]:
-    """Enumerate every episode URL from the WordPress post sitemap(s).
+def extract_episode_numbers(title: str, url: str = "") -> set[int]:
+    """All explicitly numbered episodes represented by a page (e.g. #330 & #331)."""
+    numbers = {int(value) for value in re.findall(r"#(\d{1,4})\b", title or "")}
+    primary = extract_episode_number(title, url)
+    if primary is not None:
+        numbers.add(primary)
+    return numbers
 
-    The sitemap is far more complete than the paginated category archive
-    (~555 episodes vs ~204), so it's the source of truth for the URL list.
-    """
-    resp = fetch(session, SITEMAP_INDEX)
+
+def episode_url_from_title(title: str, episode_number: int) -> str:
+    suffix = re.sub(r"^.*?#\d{1,4}\s*[:\-–—]?\s*", "", title).strip()
+    ascii_text = unicodedata.normalize("NFKD", suffix).encode("ascii", "ignore").decode()
+    ascii_text = ascii_text.replace("&", " and ").replace("'", "")
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+    return f"{BASE_URL}/curbsiders-podcast/{episode_number}-{slug}"
+
+
+def _rss_date(raw: str) -> str:
+    try:
+        return parsedate_to_datetime(raw).date().isoformat()
+    except (TypeError, ValueError, OverflowError):
+        match = re.search(r"(\d{4}-\d{2}-\d{2})", raw or "")
+        return match.group(1) if match else ""
+
+
+def discover_rss_episodes(session: cr.Session) -> list[dict]:
+    """Return numbered episode descriptors from the official RSS feed."""
+    resp = fetch(session, RSS_URL)
     if resp is None:
-        return []
-    sub_sitemaps = [u for u in locs_from_xml(resp.text) if "post-sitemap" in u]
-    if not sub_sitemaps:  # fall back to a single conventional name
-        sub_sitemaps = [f"{BASE_URL}/post-sitemap.xml"]
+        raise RuntimeError("official RSS feed returned 404")
+    try:
+        root = ET.fromstring(resp.content)
+    except ET.ParseError as exc:
+        raise RuntimeError(f"official RSS feed is not valid XML: {exc}") from exc
 
-    episodes: list[str] = []
-    seen: set[str] = set()
-    for sm in sub_sitemaps:
-        r = fetch(session, sm)
-        if r is None:
+    items = root.findall("./channel/item")
+    if len(items) < MIN_RSS_ITEMS:
+        raise RuntimeError(
+            f"RSS discovery returned only {len(items)} items; refusing a partial/empty ingest"
+        )
+
+    discovered: dict[int, dict] = {}
+    for item in items:
+        title = html.unescape((item.findtext("title") or "").strip())
+        number = extract_episode_number(title)
+        if number is None:
             continue
-        for loc in locs_from_xml(r.text):
-            href = normalize_url(loc)
-            if href.endswith(EXCLUDE_SUFFIXES):
-                continue
-            if EPISODE_URL_RE.match(href) and href not in seen:
-                seen.add(href)
-                episodes.append(href)
-        time.sleep(REQUEST_DELAY)
-    return episodes
+        # Reboots repeat an existing episode number. Prefer the original numbered
+        # item and never create a duplicate episode from a reboot feed entry.
+        is_reboot = "reboot" in title.lower()
+        if number in discovered and is_reboot:
+            continue
+        row = {
+            "episode_number": number,
+            "title": title,
+            "date": _rss_date(item.findtext("pubDate") or ""),
+            "audio_url": (item.findtext("link") or "").strip(),
+            "url": episode_url_from_title(title, number),
+            "is_reboot": is_reboot,
+        }
+        if number not in discovered or not is_reboot:
+            discovered[number] = row
+    if not discovered:
+        raise RuntimeError("RSS feed contained no numbered Curbsiders episodes")
+    return sorted(discovered.values(), key=lambda row: -row["episode_number"])
 
 
 def html_to_text_with_links(element) -> str:
-    """Convert a BeautifulSoup element to text, preserving links as [text](url)."""
-    for a in element.find_all("a"):
-        href = a.get("href", "")
-        text = a.get_text(strip=True)
+    for anchor in element.find_all("a"):
+        href = anchor.get("href", "")
+        text = anchor.get_text(strip=True)
         if href and text:
-            a.replace_with(f"[{text}]({href}) ")
+            anchor.replace_with(f"[{text}]({href}) ")
     return element.get_text(separator="\n", strip=True)
 
 
 def parse_episode_date(soup: BeautifulSoup) -> str:
     candidates = []
     for meta in soup.find_all("meta"):
-        attr_name = (meta.get("property") or meta.get("name") or "").strip().lower()
-        if attr_name in {"article:published_time", "og:published_time"}:
+        name = (meta.get("property") or meta.get("name") or "").strip().lower()
+        if name in {"article:published_time", "og:published_time"}:
             candidates.append(meta)
     candidates.extend(soup.find_all("time"))
-
     for candidate in candidates:
         raw = candidate.get("content") or candidate.get("datetime") or candidate.get_text(strip=True)
-        if not raw:
-            continue
-        match = re.search(r"(\d{4}-\d{2}-\d{2})", raw)
+        match = re.search(r"(\d{4}-\d{2}-\d{2})", raw or "")
         if match:
             return match.group(1)
     return ""
 
 
-def parse_episode(html: str) -> tuple[str, str, str]:
-    """Return (title, show_notes_text, episode_date). Handles the site's different themes."""
-    soup = BeautifulSoup(html, "lxml")
-
+def parse_episode(page: str) -> tuple[str, str, str]:
+    soup = BeautifulSoup(page, "lxml")
     title_el = soup.find("h1") or soup.find("title")
     title = title_el.get_text(strip=True) if title_el else ""
-
     candidates = [
-        soup.find("div", class_="entry-content"),
-        soup.find("div", class_="post-content"),
-        soup.find(id="columns_main"),
-        soup.find("div", class_="content"),
-        soup.find("main"),
+        soup.find("div", class_="entry-content"), soup.find("div", class_="post-content"),
+        soup.find(id="columns_main"), soup.find("div", class_="content"), soup.find("main"),
         soup.find("article"),
     ]
-    candidates = [c for c in candidates if c is not None]
-    content = max(candidates, key=lambda c: len(c.get_text(strip=True)), default=None)
-    notes = html_to_text_with_links(content) if content else ""
-    return title, notes, parse_episode_date(soup)
+    candidates = [candidate for candidate in candidates if candidate is not None]
+    content = max(candidates, key=lambda candidate: len(candidate.get_text(strip=True)), default=None)
+    return title, html_to_text_with_links(content) if content else "", parse_episode_date(soup)
 
 
-def extract_episode_number(title: str, url: str) -> int | None:
-    for field in (title, url):
-        m = re.search(r"#?(\d{1,3})", field)
-        if m:
-            return int(m.group(1))
-    return None
+def _clean_reader_markdown(markdown: str) -> str:
+    lines = []
+    for line in markdown.splitlines():
+        if re.match(r"^!\[[^]]*\]\([^)]+\)\s*$", line.strip()):
+            continue
+        line = re.sub(r"^\s*#{1,6}\s*", "", line)
+        line = re.sub(r"^\s*\*\s{2,}", "- ", line)
+        line = line.replace("**", "")
+        lines.append(line.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def parse_reader_page(text: str) -> tuple[str, str, str]:
+    title_match = re.search(r"^Title:\s*(.+)$", text, re.MULTILINE)
+    date_match = re.search(r"^Published Time:\s*(.+)$", text, re.MULTILINE)
+    marker = "Markdown Content:"
+    if marker not in text:
+        raise ValueError("reader response omitted Markdown Content")
+    title = (title_match.group(1) if title_match else "").removesuffix(" - The Curbsiders").strip()
+    date_value = date_match.group(1) if date_match else ""
+    date_match_value = re.search(r"(\d{4}-\d{2}-\d{2})", date_value)
+    return title, _clean_reader_markdown(text.split(marker, 1)[1]), date_match_value.group(1) if date_match_value else ""
+
+
+def fetch_episode_page(session: cr.Session, url: str) -> tuple[str, str, str, str]:
+    direct_error: Exception | None = None
+    try:
+        response = fetch(session, url)
+        if response is not None:
+            title, notes, date = parse_episode(response.text)
+            if len(notes) >= MIN_SHOW_NOTES_CHARS:
+                return title, notes, date, "website"
+            direct_error = RuntimeError(f"direct page contained only {len(notes)} note characters")
+    except Exception as exc:
+        direct_error = exc
+
+    if not READER_BASE:
+        raise RuntimeError(f"direct episode fetch failed and reader fallback is disabled: {direct_error}")
+    reader_url = f"{READER_BASE}{url.removeprefix('https://').removeprefix('http://')}"
+    response = fetch(session, reader_url)
+    if response is None:
+        raise RuntimeError(f"reader returned 404 after direct fetch failed: {direct_error}")
+    title, notes, date = parse_reader_page(response.text)
+    if len(notes) < MIN_SHOW_NOTES_CHARS:
+        raise RuntimeError(f"reader page contained only {len(notes)} note characters")
+    return title, notes, date, "jina_reader"
 
 
 def needs_refresh(entry: dict) -> bool:
-    # Only show_notes is essential. Episode dates are frequently absent from the
-    # source markup, so a missing date must not force a full re-fetch of every
-    # already-scraped episode.
     return not entry.get("show_notes")
 
 
 def sorted_episode_rows(results: dict[str, dict]) -> list[dict]:
-    return sorted(
-        results.values(),
-        key=lambda entry: (-(entry.get("episode_number") or 0), entry.get("title") or ""),
-    )
+    return sorted(results.values(), key=lambda row: (-(row.get("episode_number") or 0), row.get("title") or ""))
 
 
-def main():
+def _load_existing() -> list[dict]:
+    if not OUTPUT_FILE.exists():
+        return []
+    with OUTPUT_FILE.open() as handle:
+        return json.load(handle)
+
+
+def run(*, dry_run: bool = False, refresh_recent: int = 12) -> int:
     DATA_DIR.mkdir(exist_ok=True)
-
-    existing: dict[str, dict] = {}
-    if OUTPUT_FILE.exists():
-        with open(OUTPUT_FILE) as f:
-            data = json.load(f)
-        existing = {e["url"]: e for e in data}
-        print(f"Loaded {len(existing)} previously scraped episodes")
+    existing_rows = _load_existing()
+    existing_by_number = {}
+    for row in existing_rows:
+        for number in extract_episode_numbers(row.get("title", ""), row.get("url", "")):
+            existing_by_number.setdefault(number, row)
+    print(f"Loaded {len(existing_rows)} cached episodes")
 
     session = make_session()
+    print(f"Discovering episodes from official RSS: {RSS_URL}")
+    inventory = discover_rss_episodes(session)
+    print(f"RSS returned {len(inventory)} unique numbered episodes")
 
-    # Phase 1: collect all episode URLs from the sitemap.
-    print("\nPhase 1: Collecting episode URLs from sitemap...")
-    all_urls = discover_episode_urls(session)
-    print(f"Found {len(all_urls)} unique episodes")
+    for descriptor in inventory:
+        cached = existing_by_number.get(descriptor["episode_number"])
+        if cached:
+            descriptor["url"] = cached["url"]
 
-    # Phase 2: fetch show notes for episodes we don't already have.
-    print("\nPhase 2: Fetching show notes...")
-    results: dict[str, dict] = dict(existing)
-    new_count = 0
-    to_fetch = [u for u in all_urls if u not in existing or needs_refresh(existing[u])]
+    new_rows = [row for row in inventory if row["episode_number"] not in existing_by_number and not row["is_reboot"]]
+    recent = inventory[:max(refresh_recent, 0)]
+    refresh_numbers = {row["episode_number"] for row in recent}
+    fetch_rows = [
+        row for row in inventory
+        if row in new_rows or row["episode_number"] in refresh_numbers
+        or needs_refresh(existing_by_number.get(row["episode_number"], {}))
+    ]
 
-    for i, url in enumerate(to_fetch):
+    print(f"New episodes: {len(new_rows)} | pages to fetch/refresh: {len(fetch_rows)}")
+    for row in new_rows:
+        print(f"  NEW #{row['episode_number']} {row['title']} ({row['date']})")
+    if dry_run:
+        print("Dry run: live discovery completed; no files changed.")
+        return 0
+
+    results = {row["url"]: dict(row) for row in existing_rows}
+    # RSS is authoritative for dates and feed titles even when a WAF prevents a
+    # page refresh. Preserve richer website titles already in the cache.
+    for descriptor in inventory:
+        cached = existing_by_number.get(descriptor["episode_number"])
+        if cached:
+            cached_copy = dict(results.get(cached["url"], cached))
+            candidate_dates = [value for value in (cached_copy.get("date"), descriptor["date"]) if value]
+            cached_copy["date"] = max(candidate_dates) if candidate_dates else ""
+            if not cached_copy.get("audio_url"):
+                cached_copy["audio_url"] = descriptor["audio_url"]
+            results[cached_copy["url"]] = cached_copy
+
+    new_numbers = {row["episode_number"] for row in new_rows}
+    new_failures = []
+    refresh_failures = []
+    for index, descriptor in enumerate(fetch_rows, 1):
         try:
-            resp = fetch(session, url)
-            if resp is None:
-                print(f"  [{i+1}/{len(to_fetch)}] skipped (no page): {url}")
-                continue
-            title, show_notes, episode_date = parse_episode(resp.text)
-            ep_num = extract_episode_number(title, url)
-            print(f"  [{i+1}/{len(to_fetch)}] #{ep_num or '?'}: {title[:50]} "
-                  f"({len(show_notes)} chars)")
-
-            results[url] = {
-                "url": url,
-                "title": title,
-                "date": episode_date,
-                "episode_number": ep_num,
-                "show_notes": show_notes,
-                "show_notes_length": len(show_notes),
-                "transcript_url": extract_transcript_url(show_notes),
+            title, notes, page_date, source = fetch_episode_page(session, descriptor["url"])
+            number = descriptor["episode_number"]
+            results[descriptor["url"]] = {
+                "url": descriptor["url"],
+                "title": title or descriptor["title"],
+                "date": page_date or descriptor["date"],
+                "episode_number": number,
+                "show_notes": notes,
+                "show_notes_length": len(notes),
+                "transcript_url": extract_transcript_url(notes),
+                "audio_url": descriptor["audio_url"],
+                "show_notes_source": source,
+                "last_checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             }
-            new_count += 1
+            print(f"  [{index}/{len(fetch_rows)}] #{number}: {len(notes)} chars via {source}")
+        except Exception as exc:
+            target = new_failures if descriptor["episode_number"] in new_numbers else refresh_failures
+            target.append((descriptor, exc))
+            print(f"  [{index}/{len(fetch_rows)}] ERROR #{descriptor['episode_number']}: {exc}")
+        time.sleep(REQUEST_DELAY)
 
-            if new_count % 10 == 0:
-                with open(OUTPUT_FILE, "w") as f:
-                    json.dump(sorted_episode_rows(results), f, indent=2, ensure_ascii=False)
-                print(f"    -> Progress saved ({len(results)} total)")
+    if new_failures:
+        print(f"Refusing to write: {len(new_failures)} newly discovered episode page(s) failed.", file=sys.stderr)
+        return 1
+    if fetch_rows and len(refresh_failures) == len(fetch_rows):
+        print("Refusing to write: every scheduled page refresh failed.", file=sys.stderr)
+        return 1
 
-            time.sleep(REQUEST_DELAY)
-        except Exception as e:
-            print(f"    -> Error on {url}: {type(e).__name__}: {e}")
-            time.sleep(2)
+    with OUTPUT_FILE.open("w") as handle:
+        json.dump(sorted_episode_rows(results), handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    print(f"Saved {len(results)} episodes to {OUTPUT_FILE} ({len(refresh_failures)} refresh warnings)")
+    return 0
 
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(sorted_episode_rows(results), f, indent=2, ensure_ascii=False)
 
-    print(f"\nDone. {len(results)} episodes saved to {OUTPUT_FILE}")
-    print(f"({new_count} newly scraped, {len(existing)} from cache)")
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="Perform live discovery but do not write")
+    parser.add_argument("--refresh-recent", type=int, default=12, help="Refresh this many newest RSS episodes")
+    args = parser.parse_args()
+    return run(dry_run=args.dry_run, refresh_recent=args.refresh_recent)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -123,6 +123,23 @@ BOILERPLATE_PREFIXES = (
     "the curbsiders report",
 )
 
+DANGLING_WORDS = {
+    "a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or",
+    "the", "to", "with", "including", "such", "than", "into", "over", "under",
+    "no", "use", "while",
+}
+PRESENTER_LINE_RE = re.compile(r"\bw/\s+dr\.|\bwith\s+dr\.", re.IGNORECASE)
+SHOW_NOTES_TITLE_RE = re.compile(
+    r"^(?:show notes\b|these are abbreviated show notes\b|"
+    r"[^.!?]{1,120}(?:\s+[–—:-]\s*|\s+)(?:in-depth\s+)?show notes\s*$|"
+    r"[^.!?]{1,120}\s+[–—:-]\s*notes\s*$)",
+    re.IGNORECASE,
+)
+SHOW_NOTES_TAIL_RE = re.compile(r"\s+(?:in-depth\s+)?show notes\s*$", re.IGNORECASE)
+RESOURCE_SECTION_RE = re.compile(r"^(?:links|resources|references)(?:\s|$)", re.IGNORECASE)
+NESTED_IMAGE_RE = re.compile(r"\[!\[[^]]*\]\([^)]+\)\]\([^)]+\)")
+IMAGE_RE = re.compile(r"!\[[^]]*\]\([^)]+\)")
+
 MAX_PEARLS_PER_BLOCK = 30
 MIN_PEARL_WORDS = 5
 MIN_PEARL_LONG_CHARS = 45
@@ -152,6 +169,8 @@ def _is_pearl_statement(line: str) -> bool:
         return False
     if stripped.lower().startswith(BOILERPLATE_PREFIXES):
         return False
+    if PRESENTER_LINE_RE.search(stripped) and not _ends_with_sentence_punct(stripped):
+        return False
     words = stripped.split()
     if len(words) < MIN_PEARL_WORDS:
         return False
@@ -160,6 +179,9 @@ def _is_pearl_statement(line: str) -> bool:
 
 def _strip_pearl_line(line: str) -> str:
     stripped = BULLET_PREFIX_RE.sub("", line.strip()).strip()
+    stripped = NESTED_IMAGE_RE.sub("", stripped)
+    stripped = IMAGE_RE.sub("", stripped)
+    stripped = SHOW_NOTES_TAIL_RE.sub("", stripped)
     return stripped
 
 
@@ -169,10 +191,74 @@ def _strip_heading_decoration(line: str) -> str:
     return HEADING_DECORATION_RE.sub("", line.strip()).strip()
 
 
+def _looks_like_section_heading(line: str) -> bool:
+    """Recognize title-cased body headings that follow a pearls list."""
+    plain = re.sub(r"\[[^]]+\]\([^)]+\)", "", line).strip()
+    if not plain or _ends_with_sentence_punct(plain):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z'’\-]*", plain)
+    if not 2 <= len(words) <= 16:
+        return False
+    minor = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
+    title_like = sum(word.lower() in minor or word[0].isupper() for word in words)
+    return title_like / len(words) >= 0.75
+
+
 def _join_split_citation(match: re.Match) -> str:
     inner = re.sub(r"\s*\r?\n\s*", " ", match.group(1)).strip()
     inner = re.sub(r"\s+,", ",", inner)
     return f" ({inner}){match.group(2)}"
+
+
+def _join_wrapped_statement(lines: list[str], start: int) -> tuple[str, int]:
+    """Reassemble one HTML paragraph split around inline links/emphasis.
+
+    BeautifulSoup's newline separator preserves block boundaries but also puts
+    inline anchors on their own lines. We join only when the current fragment is
+    grammatically/delimiter-incomplete or the next line is visibly a continuation.
+    """
+    text = lines[start].strip()
+    cursor = start + 1
+    joined = 0
+    # Link-heavy paragraphs can be split into many tiny fragments (one line for
+    # each anchor plus surrounding prose). The continuation checks below are
+    # the safety boundary; this cap only prevents pathological input loops.
+    while cursor < len(lines) and joined < 30:
+        nxt = lines[cursor].strip()
+        if not nxt:
+            cursor += 1
+            continue
+        if PEARL_HEADING_RE.match(_strip_heading_decoration(nxt)) and not _ends_with_sentence_punct(nxt):
+            break
+        if BARE_ENUMERATION_RE.match(nxt):
+            break
+        last_word_match = re.search(r"([A-Za-z]+)\s*$", text)
+        last_word = last_word_match.group(1).lower() if last_word_match else ""
+        # Only a delimiter at the *end* proves the HTML paragraph continued on
+        # the next line. Counting all delimiters lets a typo early in a pearl
+        # absorb many subsequent bullet points.
+        delimiter_open = text.rstrip().endswith(("(", "["))
+        continuation = bool(
+            last_word in DANGLING_WORDS
+            or delimiter_open
+            or (nxt[:1].islower())
+            or (nxt.isdigit() and len(nxt) <= 2)
+            or (text[-1:].isdigit() and re.match(r"^[A-Z]{1,4}$", nxt))
+            or (text[-1:].isdigit() and nxt.startswith("-"))
+            or re.match(r"^(?:\(|\[|\)|\]|[/,.]|and\b|or\b|to\b|of\b|in\b|with\b|for\b|as\b|which\b|that\b|from\b|based\b|using\b)", nxt, re.I)
+        )
+        if not continuation:
+            break
+        compact_subscript = text[-1:].isdigit() and (nxt.startswith("-") or bool(re.match(r"^[A-Z]{1,4}$", nxt)))
+        separator = "" if nxt.startswith((",", ".", ")", "]", "/")) or nxt.isdigit() or compact_subscript else " "
+        text = f"{text}{separator}{nxt}"
+        cursor += 1
+        joined += 1
+    # Repair a common scrape artifact: a stray opening square bracket before a
+    # complete Markdown link ("[ [Author](url) ]").
+    if text.count("[") > text.count("]"):
+        text = re.sub(r"\[\s+(?=\[[^]]+\]\()", "", text, count=1)
+    return text.strip(), cursor
 
 
 def parse_pearls_from_show_notes(show_notes: str) -> list[dict]:
@@ -220,12 +306,20 @@ def parse_pearls_from_show_notes(show_notes: str) -> list[dict]:
             # A new pearls heading ends this block; let the outer loop handle it.
             if PEARL_HEADING_RE.match(_strip_heading_decoration(candidate)) and not _ends_with_sentence_punct(candidate):
                 break
+            if (
+                SHOW_NOTES_TITLE_RE.match(candidate)
+                or RESOURCE_SECTION_RE.match(candidate)
+            ):
+                break
+            candidate, next_index = _join_wrapped_statement(lines, i)
             stripped = _strip_pearl_line(candidate)
+            if _looks_like_section_heading(stripped):
+                break
             if not _is_pearl_statement(stripped):
                 break
             pearls.append({"topic": topic, "pearl": stripped})
             collected += 1
-            i += 1
+            i = next_index
 
     return _dedupe_pearls_within_episode(pearls)
 

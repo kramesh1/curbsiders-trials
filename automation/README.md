@@ -8,7 +8,9 @@ when no new episode is pending — so a run that finds nothing new spends ~0 tok
 
 Everything here drives that from a schedule. `run_ingest.sh` is the entry point:
 it resolves the repo, loads `.env` (for `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`),
-activates `.venv`, takes a lock so runs can't overlap, and appends to `ingest.log`.
+requires and executes `.venv/bin/python`, takes a lock so runs can't overlap, and
+appends to `ingest.log`. It fails visibly if the virtual environment or dependencies
+are absent; set `CURBSIDERS_ALLOW_SYSTEM_PYTHON=1` only for an intentional override.
 
 ## Quick test (no schedule, no spend)
 
@@ -62,15 +64,15 @@ Note: launchd jobs run in a minimal environment. Keep API keys in the repo's
 
 ## What the schedule does *not* do
 
-The model-assisted **pearl→evidence linking** layer stays owner-gated by design —
-it spends tokens per episode and is not wired into `ingest.py`. After a run brings
-in a new episode, link and adjudicate it deliberately:
+Model **generation** for pearl→evidence links stays owner-gated — it spends tokens
+and is not scheduled. `ingest.py` does re-apply already attributable approvals so
+published sidecars cannot go stale. After a run brings in a new episode, generate
+and adjudicate deliberately:
 
 ```bash
 python scripts/link_pearls_evidence.py generate --episode <N>   # or submit-batch
-python scripts/link_pearls_evidence.py apply
-# then review, e.g.:
 python scripts/link_pearls_evidence.py adjudicate --episode <N> --trial "<bad study>" --reject
+python scripts/link_pearls_evidence.py adjudicate --episode <N> --record --approve --reviewer "<name>"
 python scripts/link_pearls_evidence.py apply
 ```
 

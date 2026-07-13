@@ -178,9 +178,12 @@ def main() -> int:
         print(f"Error: {EPISODES_FILE} not found and --skip-scrape was set.")
         return 1
 
-    # Phase 1: scrape (unless skipped). The scraper is itself incremental.
-    if not args.skip_scrape and not args.dry_run:
-        python_step("scrape", "scrape_episodes.py")
+    # Phase 1: scrape (unless skipped). A dry-run still performs live RSS
+    # discovery; otherwise it could incorrectly report zero pending episodes from
+    # a stale local cache.
+    if not args.skip_scrape:
+        scrape_args = ["--dry-run"] if args.dry_run else []
+        python_step("scrape discovery" if args.dry_run else "scrape", "scrape_episodes.py", *scrape_args)
 
     # Phase 2: harvest official transcripts for any episode that links one. Also
     # incremental (skips already-fetched) and spends no tokens. Skipped alongside
@@ -220,7 +223,8 @@ def main() -> int:
             print(f"  ... and {len(already_failed) - 10} more")
 
     if args.dry_run:
-        print("\nDry run: no extraction, pearls, or site rebuild performed.")
+        discovery = "live discovery completed; " if not args.skip_scrape else ""
+        print(f"\nDry run: {discovery}no extraction, pearls, or site rebuild performed.")
         return 0
 
     pearls_before = count_pearls()
@@ -252,6 +256,11 @@ def main() -> int:
     python_step("enrich", "enrich_trials.py")
     python_step("pearls", "extract_pearls.py")
     python_step("show-note-evidence", "extract_show_note_evidence.py")
+    # Re-compose owner-gated sidecars on every build. These commands publish
+    # only attributable human approvals and safely clear stale published data
+    # when no such approvals exist.
+    python_step("apply-reviewed-pearl-links", "link_pearls_evidence.py", "apply")
+    python_step("apply-reviewed-screening", "screen_trials.py", "apply")
     python_step("site", "build_site.py")
 
     # Phase 8: validate.

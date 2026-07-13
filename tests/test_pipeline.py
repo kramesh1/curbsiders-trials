@@ -30,14 +30,19 @@ from scripts.import_feedback import (
     _row_matches,
     aggregate_approved,
 )
-from scripts.scrape_episodes import extract_transcript_url, parse_episode
+from scripts.scrape_episodes import (
+    episode_url_from_title,
+    extract_transcript_url,
+    parse_episode,
+    parse_reader_page,
+)
 from scripts.fetch_transcripts import (
     clean_text as clean_transcript_text,
     extract_text,
     looks_ai_generated,
 )
 from scripts.harvest_youtube_captions import episode_number_from_title, parse_vtt
-from scripts.generate_candidate_pearls import quote_is_verbatim, restrict_to_pearl_gap
+from scripts.generate_candidate_pearls import _public_candidate, quote_is_verbatim, restrict_to_pearl_gap
 from scripts.link_pearls_evidence import (
     apply_decision,
     apply_record_decision,
@@ -56,6 +61,8 @@ from scripts.trial_utils import (
     normalize_trial_record,
     recover_missing_urls_from_show_notes,
     split_show_notes_into_chunks,
+    stable_evidence_identity,
+    trial_identity_key,
 )
 from scripts.show_note_evidence import (
     annotate_show_note_matches,
@@ -151,9 +158,30 @@ class ChunkingTests(unittest.TestCase):
         self.assertEqual(len(deduped), 1)
         self.assertEqual(
             deduped[0]["pubmed_url"],
-            "https://www.thelancet.com/journals/lancet/article/PIIS0140-6736(18)31133-4/fulltext",
+            "https://thelancet.com/journals/lancet/article/PIIS0140-6736(18)31133-4/fulltext",
         )
         self.assertEqual(deduped[0]["study_type"], "RCT")
+
+
+class EvidenceIdentityHardeningTests(unittest.TestCase):
+    def test_legacy_and_modern_pubmed_urls_share_pmid_identity(self):
+        modern = "https://pubmed.ncbi.nlm.nih.gov/30221597/"
+        legacy = "https://www.ncbi.nlm.nih.gov/pubmed/30221597"
+        self.assertEqual(stable_evidence_identity(modern), ("pmid", "30221597"))
+        self.assertEqual(trial_identity_key({"pubmed_url": modern}), trial_identity_key({"pubmed_url": legacy}))
+
+    def test_bare_pubmed_root_falls_back_to_title_instead_of_merging(self):
+        first = {"pubmed_url": "https://www.ncbi.nlm.nih.gov/pubmed", "paper_title": "Paper one"}
+        second = {"pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/", "paper_title": "Paper two"}
+        self.assertEqual(trial_identity_key(first), ("title", "paper one"))
+        self.assertEqual(trial_identity_key(second), ("title", "paper two"))
+
+    def test_clinicalkey_content_fragment_is_preserved(self):
+        url = "https://www.clinicalkey.com/#!/content/playContent/1-s2.0-S123456"
+        self.assertEqual(
+            stable_evidence_identity(url),
+            ("url", "https://clinicalkey.com/#!/content/playContent/1-s2.0-S123456"),
+        )
 
 
 class NullSentinelTests(unittest.TestCase):
@@ -398,6 +426,23 @@ class ScrapeEpisodeTests(unittest.TestCase):
         self.assertEqual(date, "2025-06-01")
         self.assertIn("Notes here", notes)
 
+    def test_builds_episode_url_from_rss_title(self):
+        self.assertEqual(
+            episode_url_from_title("#531 2025 ACLS Guideline Updates: Live!", 531),
+            "https://thecurbsiders.com/curbsiders-podcast/531-2025-acls-guideline-updates-live",
+        )
+
+    def test_parses_reader_markdown_fallback(self):
+        title, notes, date = parse_reader_page(
+            "Title: #531 ACLS - The Curbsiders\n"
+            "Published Time: 2026-07-06T00:00:00Z\n"
+            "Markdown Content:\n## **ACLS Pearls**\n*   Use epinephrine.\n"
+        )
+        self.assertEqual(title, "#531 ACLS")
+        self.assertEqual(date, "2026-07-06")
+        self.assertIn("ACLS Pearls", notes)
+        self.assertNotIn("**", notes)
+
 
 class TranscriptLinkTests(unittest.TestCase):
     def test_matches_transcript_in_link_text(self):
@@ -460,6 +505,12 @@ class QuoteVerificationTests(unittest.TestCase):
         # Too short to be a meaningful citation.
         self.assertFalse(quote_is_verbatim("aspirin", transcript))
         self.assertFalse(quote_is_verbatim("", transcript))
+
+    def test_public_candidate_contains_hash_not_transcript_quote(self):
+        public = _public_candidate({"statement": "Use X.", "supporting_quote": "Exact transcript sentence."})
+        self.assertNotIn("supporting_quote", public)
+        self.assertEqual(public["supporting_quote_char_count"], 26)
+        self.assertEqual(len(public["supporting_quote_sha256"]), 64)
 
 
 class PearlGapRestrictionTests(unittest.TestCase):
@@ -702,6 +753,68 @@ The ketogenic diet is high in fat and very low in carbohydrates, and was origina
     def assertFalseIfPresent(self, pearls, needle):
         self.assertFalse(any(needle in pearl["pearl"] for pearl in pearls))
 
+    def test_reassembles_inline_link_split_across_scraped_lines(self):
+        notes = (
+            "Hypertension Pearls\n"
+            "For home monitoring, use a blood pressure device vetted by\n"
+            "[ValidateBP.org](https://validatebp.org)\n"
+            ".\n"
+            "Confirm severe readings with repeat measurement before changing therapy.\n"
+        )
+        pearls = parse_pearls_from_show_notes(notes)
+        self.assertEqual(len(pearls), 2)
+        self.assertEqual(
+            pearls[0]["pearl"],
+            "For home monitoring, use a blood pressure device vetted by [ValidateBP.org](https://validatebp.org).",
+        )
+
+    def test_reassembles_lowercase_continuation_after_inline_link(self):
+        notes = (
+            "Asthma Pearls\n"
+            "Refer to the [GINA report](https://ginasthma.org/report)\n"
+            "for comprehensive guidance in complex cases.\n"
+        )
+        self.assertEqual(
+            parse_pearls_from_show_notes(notes)[0]["pearl"],
+            "Refer to the [GINA report](https://ginasthma.org/report) for comprehensive guidance in complex cases.",
+        )
+
+    def test_show_notes_title_ends_pearl_block(self):
+        notes = (
+            "Thyroid Pearls\n"
+            "Most thyroid nodules are benign.\n"
+            "Thyroid Nodules for Primary Care Show Notes\n"
+            "Body copy that should not be treated as a pearl.\n"
+        )
+        self.assertEqual(len(parse_pearls_from_show_notes(notes)), 1)
+
+    def test_resource_heading_ends_pearl_block(self):
+        notes = (
+            "Travel Medicine Pearls\n"
+            "Review vaccine requirements well before international travel.\n"
+            "Links [CDC Yellow Book](https://wwwnc.cdc.gov/travel/page/yellowbook-home)\n"
+        )
+        self.assertEqual(len(parse_pearls_from_show_notes(notes)), 1)
+
+    def test_title_case_body_heading_ends_pearl_block(self):
+        notes = (
+            "Eating Disorder Pearls\n"
+            "Screen for restrictive eating without relying on body mass index alone.\n"
+            "Beyond BMI: A Non-Judgmental Approach to Screening\n"
+            "Body copy that should not be treated as a pearl.\n"
+        )
+        self.assertEqual(len(parse_pearls_from_show_notes(notes)), 1)
+
+    def test_reassembles_parenthetical_and_subscript_continuations(self):
+        notes = (
+            "Perioperative Pearls\n"
+            "Consider CHA\n2\nDS\n2\n-VASc risk before anticoagulation.\n"
+            "Build two problem representations\n(e.g. cough alone versus exposure-associated cough).\n"
+        )
+        pearls = parse_pearls_from_show_notes(notes)
+        self.assertEqual(pearls[0]["pearl"], "Consider CHA2DS2-VASc risk before anticoagulation.")
+        self.assertIn("(e.g. cough", pearls[1]["pearl"])
+
     def test_heading_with_trailing_colon_matches(self):
         notes = (
             "Clinical Pearls:\n"
@@ -794,7 +907,7 @@ class PearlLinkingTests(unittest.TestCase):
         citations = pearls[0]["supporting_citations"]
         self.assertEqual(len(citations), 1)
         self.assertEqual(citations[0]["citation_label"], "Appel et al 1997")
-        self.assertEqual(citations[0]["canonical_key"], "pubmed|https://pubmed.ncbi.nlm.nih.gov/9099655")
+        self.assertEqual(citations[0]["canonical_key"], "pmid|9099655")
         self.assertEqual(pearls[0]["specialty_tags"], ["cardiology"])
 
     def test_links_by_inline_url_even_with_low_overlap(self):
@@ -849,7 +962,7 @@ class CanonicalPearlTests(unittest.TestCase):
         trial = {"pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/26551272/"}
         self.assertEqual(
             trial_canonical_key(trial),
-            "pubmed|https://pubmed.ncbi.nlm.nih.gov/26551272",
+            "pmid|26551272",
         )
 
     def test_merges_evidence_links_preferring_higher_rank(self):
@@ -1146,7 +1259,7 @@ class PearlEvidenceLinkerTests(unittest.TestCase):
         self.assertEqual(dropped, 0)
         self.assertEqual(len(by_pearl[0]), 1)
         cite = by_pearl[0][0]
-        self.assertEqual(cite["canonical_key"], "pubmed|https://pubmed.ncbi.nlm.nih.gov/26551272")
+        self.assertEqual(cite["canonical_key"], "pmid|26551272")
         self.assertEqual(cite["support"], "direct")
         self.assertEqual(cite["confidence"], "high")
 

@@ -1,5 +1,19 @@
 [
   {
+    "episode_number": 532,
+    "episode_title": "#532: Updates in Fibromyalgia Management featuring Dr. Dan Clauw",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/532-updates-in-fibromyalgia-management-featuring-dr-dan-clauw",
+    "has_transcript": false,
+    "transcript_source": null
+  },
+  {
+    "episode_number": 531,
+    "episode_title": "#531 2025 ACLS Guideline Updates Live from #SHM #Converge2026",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/531-2025-acls-guideline-updates-live-from-shm-converge2026",
+    "has_transcript": false,
+    "transcript_source": null
+  },
+  {
     "episode_number": 529,
     "episode_title": "#529 A Case of Syncope with the Clinical Problem Solvers",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/529-a-case-of-syncope-with-the-clinical-problem-solvers",
@@ -98,20 +112,6 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 493,
-    "episode_title": "#493 Joint Pain in Older Adults with Dr. Una Makris",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/493-joint-pain-in-older-adults-with-dr-una-makris",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 492,
-    "episode_title": "#492 Hair and Nails with Helena Pasieka MD MS",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/492-hair-and-nails-with-helena-pasieka-md-ms",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
     "episode_number": 488,
     "episode_title": "#488 DIGEST: Cytisinicline for smoking cessation, partner treatment for BV, combination therapy with statins and ezetimibe, and exercise and survival in colon cancer",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/488-digest-cytisinicline-for-smoking-cessation-partner-treatment-for-bv-combination-therapy-with-statins-and-ezetimibe-and-exercise-and-survival-in-colon-cancer",
@@ -150,13 +150,6 @@
     "episode_number": 476,
     "episode_title": "#476 Medications for Alcohol Use Disorder 2.0 with Dr Stephen Holt",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/476-medications-for-alcohol-use-disorder-2-0-with-dr-stephen-holt",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 473,
-    "episode_title": "#473 Rapid Response Series: Narrow Complex Tachyarrhythmias with Dr. Noble Maleque",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/473-rapid-response-series-narrow-complex-tachyarrhythmias-with-dr-noble-maleque",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -224,6 +217,13 @@
     "transcript_source": "youtube"
   },
   {
+    "episode_number": 441,
+    "episode_title": "#441 More Clinical Pearls (New antibiotics, syphilis, heart disease, cirrhosis, lots more!) from ACP #IM2024",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/441-more-clinical-pearls-new-antibiotics-syphilis-heart-disease-cirrhosis-lots-more-from-acp-im2024",
+    "has_transcript": true,
+    "transcript_source": "youtube"
+  },
+  {
     "episode_number": 438,
     "episode_title": "#438 Recap from SHM #Converge24",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/438-recap-from-shm-converge24",
@@ -252,13 +252,6 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 431,
-    "episode_title": "#431 Myocarditis and Pericarditis",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/431-myocarditis-and-pericarditis",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
     "episode_number": 428,
     "episode_title": "#428 DIGEST: DVT prophylaxis in patients with cancer, anticoagulation in subclinical AFib, steroids in COPD exacerbations, breast cancer genetic testing guidelines, and at-home STI testing",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/428-digest-dvt-prophylaxis-in-patients-with-cancer-anticoagulation-in-subclinical-afib-steroids-in-copd-exacerbations-breast-cancer-genetic-testing-guidelines-and-at-home-sti-testing",
@@ -283,6 +276,13 @@
     "episode_number": 423,
     "episode_title": "#423 Dental Pain, Caries, Gingivitis, and Oral Care Tips & Tactics for Primary Care With Dr Lisa Simon",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/423-dental-pain-caries-gingivitis-and-oral-care-tips-tactics-for-primary-care-with-dr-lisa-simon",
+    "has_transcript": true,
+    "transcript_source": "youtube"
+  },
+  {
+    "episode_number": 420,
+    "episode_title": "#420 Recap Extravaganza: 2023 Highlights and Top Stories",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/420-recap-extravaganza-2023-highlights-and-top-stories",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -399,20 +399,6 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 363,
-    "episode_title": "#363 Afib: Rhythm Control, Catheter Ablation, Afib in the hospital, and Left Atrial Appendage Closure",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/363-afib-rhythm-control-catheter-ablation-afib-in-the-hospital-and-left-atrial-appendage-closure",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 361,
-    "episode_title": "#361 Advanced Lipidology",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/361-advanced-lipidology",
-    "has_transcript": true,
-    "transcript_source": "official"
-  },
-  {
     "episode_number": 360,
     "episode_title": "#360 Disease-Modifying Nutrition with Dr. Michelle McMacken",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/360-disease-modifying-nutrition-with-dr-michelle-mcmacken",
@@ -430,13 +416,6 @@
     "episode_number": 349,
     "episode_title": "#349 Hotcakes: Tirzepatide for weight loss, Personalized Antidepressants, Seasonal Edema, Nirmatrelvir for low-risk COVID-19",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/349-hotcakes-tirzepatide-for-weight-loss-personalized-antidepressants-seasonal-edema-nirmatrelvir-for-low-risk-covid-19",
-    "has_transcript": true,
-    "transcript_source": "official"
-  },
-  {
-    "episode_number": 348,
-    "episode_title": "#348 Myositis and Myopathy, LIVE!",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/348-myositis-and-myopathy-live",
     "has_transcript": true,
     "transcript_source": "official"
   },
@@ -497,13 +476,6 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 303,
-    "episode_title": "#303 Wellness & Workarounds: Women in Medicine",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/303",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
     "episode_number": 292,
     "episode_title": "#292 Acute Heart Failure, CHF Triple Distilled",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/292",
@@ -528,13 +500,6 @@
     "episode_number": 289,
     "episode_title": "#289 Afib Triple Distilled",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/289",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 285,
-    "episode_title": "#285 Common Skin Complaints in Primary Care (Dermsiders)",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/285",
     "has_transcript": false,
     "transcript_source": null
   },
@@ -581,13 +546,6 @@
     "transcript_source": "official"
   },
   {
-    "episode_number": 252,
-    "episode_title": "#252 Smoking Cessation Unfiltered",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/252",
-    "has_transcript": true,
-    "transcript_source": "official"
-  },
-  {
     "episode_number": 248,
     "episode_title": "#248 Top Pearls of 2020: Recap Extravaganza",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/248",
@@ -619,13 +577,6 @@
     "episode_number": 229,
     "episode_title": "#229 Hotcakes: COVID on steroids, statins over 75, and shortened duration DAPT",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/229",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 228,
-    "episode_title": "#228 Thyroid on Fire! Hyperthyroidism with Dr. Eve Bloomgarden",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/228",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -708,8 +659,8 @@
   },
   {
     "episode_number": 201,
-    "episode_title": "#201: COVID Narratives: Stories from Physicians at the Front Lines",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/201",
+    "episode_title": "2018 Recap Extravaganza: The Curbsiders Favorite Pearls",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/2018-recap-extravaganza-curbsiders-favorite-pearls",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -717,13 +668,6 @@
     "episode_number": 201,
     "episode_title": "Hotcakes: Exercise, Aspirin, Fish Oil and Hypertension",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/hotcakes-november-2018",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 201,
-    "episode_title": "2018 Recap Extravaganza: The Curbsiders Favorite Pearls",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/2018-recap-extravaganza-curbsiders-favorite-pearls",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -910,16 +854,16 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 146,
-    "episode_title": "#146 NephMadness: Pain Meds in Chronic Kidney Disease",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/146-nephmadness-pain-meds-in-chronic-kidney-disease",
+    "episode_number": 145,
+    "episode_title": "REBOOT #145 Hepatorenal Syndrome #NephMadness￼",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/reboot145",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 145,
-    "episode_title": "REBOOT #145 Hepatorenal Syndrome #NephMadness￼",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/reboot145",
+    "episode_number": 144,
+    "episode_title": "#144 NephMadness: Inpatient Hypertension",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/144-nephmadness-inpatient-hypertension",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -938,30 +882,9 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 139,
-    "episode_title": "#139 Genetic Testing in Primary Care",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/139-genetic-testing-in-primary-care",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 138,
-    "episode_title": "#138 Inflammatory Bowel Disease: Crohn’s and Ulcerative Colitis",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/138-inflammatory-bowel-disease-crohns-ulcerative-colitis",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
     "episode_number": 136,
     "episode_title": "#136 Sickle Cell Disease Management & Complications",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/136-sickle-cell-disease-management-complications",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 133,
-    "episode_title": "#133 Herpes for Everyone with Robert Bettiker MD",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/133-herpes-everyone-robert-bettiker-md",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -973,9 +896,9 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 131,
-    "episode_title": "#131 A Case of Cough and Dyspnea",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/131-case-cough-dyspnea",
+    "episode_number": 129,
+    "episode_title": "#129 Depression and Suicide: Occupational Hazards of Practicing Medicine",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/129-depression-and-suicide-occupational-hazards-of-practicing-medicine",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -987,37 +910,9 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 129,
-    "episode_title": "#129 Depression and Suicide: Occupational Hazards of Practicing Medicine",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/129-depression-and-suicide-occupational-hazards-of-practicing-medicine",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
     "episode_number": 127,
     "episode_title": "#127 STIs Syphilis, Gonorrhea and Chlamydia",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/127-stis-syphilis-gonorrhea-and-chlamydia",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 126,
-    "episode_title": "#126 Kashlak Morning Report with Human Dx",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/126-kashlak-morning-report-human-dx",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 125,
-    "episode_title": "#125 Hidden Curriculum",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/125-hidden-curriculum",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 124,
-    "episode_title": "#124 The Shoulder – Simplify Your Approach",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/124-the-shoulder-simplify-your-approach",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -1106,25 +1001,11 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 101,
-    "episode_title": "#101: Cirrhosis: Medications, decompensation, complications",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/101-cirrhosis-medications-decompensation-complications",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
     "episode_number": 100,
     "episode_title": "#100: Cirrhosis: Initial Evaluation and Management",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/100-cirrhosis",
     "has_transcript": true,
     "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 99,
-    "episode_title": "#99 Cancer Survivorship: What to do when the treatment is done",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/99-cancer-survivorship",
-    "has_transcript": false,
-    "transcript_source": null
   },
   {
     "episode_number": 98,
@@ -1137,20 +1018,6 @@
     "episode_number": 97,
     "episode_title": "#97 Hotcakes: Hypertension, Prostate Cancer Screening, Lifestyle & Mortality",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/97-hotcakes-hypertension",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 96,
-    "episode_title": "#96: Diabetes: A1C targets & ACP guidelines controversy",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/96-diabetes-a1c-targets-acp-guidelines-controversy",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 92,
-    "episode_title": "#92:  Pulmonary Embolism for the Internist",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/92-pulmonary-embolism-internist",
     "has_transcript": false,
     "transcript_source": null
   },
@@ -1169,37 +1036,9 @@
     "transcript_source": null
   },
   {
-    "episode_number": 89,
-    "episode_title": "#89: Conjunctivitis: Red Eye in Pr-eye-mary Care",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/89-conjunctivitis-red-eye-pr-eye-mary-care",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
     "episode_number": 88,
     "episode_title": "#88: Acid base, boy bands, and grandfather clocks with Joel Topf MD",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/88-acid-base-boy-bands-grandfather-clocks-joel-topf-md",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 87,
-    "episode_title": "#87: Toxicology 101: Talking Tox with The Dantastic Mr. Tox & Howard",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/87-toxicology-101-talking-tox-dantastic-mr-tox-howard",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 86,
-    "episode_title": "#86: COPD: Diagnosis, treatment, PFTs, and nihilism",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/86-copd-diagnosis-treatment-pfts-nihilism",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 85,
-    "episode_title": "#85: Contraceptives: Pills, mini pills, and tiny pills",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/85-contraceptives-pills-mini-pills-tiny-pills",
     "has_transcript": false,
     "transcript_source": null
   },
@@ -1211,37 +1050,9 @@
     "transcript_source": null
   },
   {
-    "episode_number": 83,
-    "episode_title": "#83 Valvular heart disease, anticoagulation, TAVR, and primary care",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/83-valvular-heart-disease-anticoagulation-tavr-primary-care",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 82,
-    "episode_title": "#82: The GeriSiders: Dementia Dos and Don’ts",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/82-gerisiders-dementia-dos-donts",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
     "episode_number": 81,
     "episode_title": "#81: Placebos, nocebos, and the doctor as a placebo",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/81-placebos-nocebos-doctor-placebo",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 80,
-    "episode_title": "#80: Pulmonary Hypertension, freeways, and cows in heart failure",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/80-pulmonary-hypertension-freeways-cows-heart-failure",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 78,
-    "episode_title": "#78 ID Pearls with Paul Sax MD",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/78-id-pearls-paul-sax-md",
     "has_transcript": false,
     "transcript_source": null
   },
@@ -1253,13 +1064,6 @@
     "transcript_source": null
   },
   {
-    "episode_number": 72,
-    "episode_title": "#72: Transgender Care in Primary Care",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/72-transgender-care-primary-care",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
     "episode_number": 71,
     "episode_title": "#71: Asthma Made Simple",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/71-asthma-made-simple",
@@ -1267,44 +1071,9 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 70,
-    "episode_title": "#70: KevinMD: Kevin Explains Everything",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/70-kevinmd-kevin-explains-everything",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
     "episode_number": 68,
     "episode_title": "#68: Tremors: One degree of Kevin Bacon?",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/68-tremors-one-degree-kevin-bacon",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 66,
-    "episode_title": "#66: Hepatitis C: Workup and Treatment in Primary Care",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/66-hepatitis-c-workup-treatment-primary-care",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 65,
-    "episode_title": "#65: Scott Weingart of EMCrit on Emergency versus Internal Medicine: The Devil of the Gaps",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/65-scott-weingart-emcrit-emergency-versus-internal-medicine-devil-gaps",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 64,
-    "episode_title": "#64: Stuff You Should Know About Health Policy",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/64-stuff-know-health-policy",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 63,
-    "episode_title": "#63: Medical Marijuana: Is it really dope?",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/63-medical-marijuana-really-dope",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -1319,13 +1088,6 @@
     "episode_number": 60,
     "episode_title": "#60: Masters of MKSAP on Medical Education",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/60-masters-mksap-medical-education",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
-    "episode_number": 59,
-    "episode_title": "#59 Back pain and Sciatica: Straighten out your practice",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/59-back-pain-sciatica-straighten-practice",
     "has_transcript": true,
     "transcript_source": "youtube"
   },
@@ -1386,13 +1148,6 @@
     "transcript_source": "youtube"
   },
   {
-    "episode_number": 36,
-    "episode_title": "#36 Recap and highlights from ACP 2017 Part 1",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/s2-e14-recap-highlights-acp-2017-part-1",
-    "has_transcript": true,
-    "transcript_source": "youtube"
-  },
-  {
     "episode_number": 34,
     "episode_title": "#34 Super Utilizers, hot spotting, and difficult patients",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/s2e12-super-utilizers-hot-spotting-difficult-patients",
@@ -1442,20 +1197,6 @@
     "transcript_source": null
   },
   {
-    "episode_number": 7,
-    "episode_title": "#7 Become a Fibromyalgia and Chronic Pain Master, Part 2",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/fibromyalgia-and-chronic-pain-part-2",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": 6,
-    "episode_title": "#6 Become a Fibromyalgia and Chronic Pain Master, Part 1",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/fibromyalgia-chronic-pain-internal-medicine",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
     "episode_number": 5,
     "episode_title": "#5 Want to dominate chest pain? Wield the power of cardiac imaging and stress testing.",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/want-to-dominate-chest-pain-wield-the-power-of-cardiac-imaging-and-stress-testing",
@@ -1485,15 +1226,15 @@
   },
   {
     "episode_number": 1,
-    "episode_title": "#1: How to study in medical school, residency and beyond…",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/matthew-watto-md-how-to-study-in-medical-school-residency-and-beyond",
+    "episode_title": "#1 Dealing with Male Hypogonadism and Low Testosterone",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/podcast-season-1-episode-1",
     "has_transcript": false,
     "transcript_source": null
   },
   {
     "episode_number": 1,
-    "episode_title": "#1 Dealing with Male Hypogonadism and Low Testosterone",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/podcast-season-1-episode-1",
+    "episode_title": "#1: How to study in medical school, residency and beyond…",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/matthew-watto-md-how-to-study-in-medical-school-residency-and-beyond",
     "has_transcript": false,
     "transcript_source": null
   },
@@ -1513,13 +1254,6 @@
   },
   {
     "episode_number": null,
-    "episode_title": "Why Do Doctors Stop Making Art?",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/why-do-doctors-stop-making-art",
-    "has_transcript": false,
-    "transcript_source": null
-  },
-  {
-    "episode_number": null,
     "episode_title": "The Curbsiders Name Joel Topf, MD Chief of Nephrology at Kashlak Memorial Hospital",
     "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/curbsiders-name-joel-topf-md-chief-nephrology-kashlak-memorial-hospital",
     "has_transcript": false,
@@ -1527,8 +1261,8 @@
   },
   {
     "episode_number": null,
-    "episode_title": "Telehealth with Ana María López MD",
-    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/telehealth-with-ana-maria-lopez-md",
+    "episode_title": "Why Do Doctors Stop Making Art?",
+    "episode_url": "https://thecurbsiders.com/curbsiders-podcast/medical-education/why-do-doctors-stop-making-art",
     "has_transcript": false,
     "transcript_source": null
   }

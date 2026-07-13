@@ -6103,5 +6103,38 @@
     "raw_mentions": 5,
     "deduped_mentions": 5,
     "error": null
+  },
+  "https://thecurbsiders.com/curbsiders-podcast/381-live-patient-centered-things-we-do-for-no-reasontm": {
+    "status": "completed",
+    "episode_number": 381,
+    "episode_title": "#381 LIVE! Patient Centered Things We Do For No ReasonTM",
+    "processed_at": "2026-07-13T13:58:25+00:00",
+    "started_at": "2026-07-13T13:58:21+00:00",
+    "chunk_count": 3,
+    "raw_mentions": 0,
+    "deduped_mentions": 0,
+    "error": null
+  },
+  "https://thecurbsiders.com/curbsiders-podcast/531-2025-acls-guideline-updates-live-from-shm-converge2026": {
+    "status": "completed",
+    "episode_number": 531,
+    "episode_title": "#531 2025 ACLS Guideline Updates Live from #SHM #Converge2026",
+    "processed_at": "2026-07-13T13:58:37+00:00",
+    "started_at": "2026-07-13T13:58:21+00:00",
+    "chunk_count": 3,
+    "raw_mentions": 11,
+    "deduped_mentions": 9,
+    "error": null
+  },
+  "https://thecurbsiders.com/curbsiders-podcast/532-updates-in-fibromyalgia-management-featuring-dr-dan-clauw": {
+    "status": "completed",
+    "episode_number": 532,
+    "episode_title": "#532: Updates in Fibromyalgia Management featuring Dr. Dan Clauw",
+    "processed_at": "2026-07-13T13:58:43+00:00",
+    "started_at": "2026-07-13T13:58:21+00:00",
+    "chunk_count": 3,
+    "raw_mentions": 16,
+    "deduped_mentions": 15,
+    "error": null
   }
 }

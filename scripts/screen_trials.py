@@ -49,6 +49,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -57,11 +58,13 @@ from datetime import datetime, timezone
 
 try:
     from scripts.extract_trials import DATA_DIR, load_json, save_json
-    from scripts.trial_utils import build_canonical_trial_records, clean_text
+    from scripts.evidence_repository import build_evidence_repository
+    from scripts.trial_utils import clean_text
     from scripts.pubmed_utils import resolve_pmid, fetch_pubmed_abstract, resolve_pmcid, fetch_pmc_fulltext
 except ImportError:
     from extract_trials import DATA_DIR, load_json, save_json
-    from trial_utils import build_canonical_trial_records, clean_text
+    from evidence_repository import build_evidence_repository
+    from trial_utils import clean_text
     from pubmed_utils import resolve_pmid, fetch_pubmed_abstract, resolve_pmcid, fetch_pmc_fulltext
 
 TRIALS_FILE = DATA_DIR / "trials.json"
@@ -78,20 +81,24 @@ DEFAULT_MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
 
 SYSTEM_PROMPT = """\
-You are an evidence-based-medicine reviewer summarizing a clinical study for a bedside \
-teaching reference used by residents making inpatient management decisions.
+You are an evidence-based-medicine reviewer summarizing a clinical study for a \
+clinician-facing teaching reference. The study may concern inpatient, outpatient, \
+preventive, diagnostic, or population care; do not force an inpatient interpretation.
 
 Rules that matter more than anything else:
 - Decompose the study into PICO: population, intervention, comparator, outcome. Use only \
 what the given text actually states.
-- Add a "clinical_bottom_line": one or two sentences on the practical inpatient-management \
-takeaway a resident could act on -- what changes at the bedside, what threshold or drug \
-choice it supports, or what practice it argues against. Base this ONLY on the outcome/result \
+- Add a "clinical_bottom_line": one or two sentences on the practical clinical takeaway \
+the evidence itself supports -- what population and care setting it applies to, what threshold, \
+drug choice, diagnostic strategy, preventive action, or practice it supports or argues against. \
+Base this ONLY on the outcome/result \
 the text actually reports, not on what the topic is generally "about." If the text doesn't \
 report a result specific enough to support a concrete action, return null rather than a \
 generic restatement of the intervention.
 - If the given text does not state a detail, return null for that field. Do NOT infer, \
 assume, or fill in a typical/expected value -- an absent detail must stay null.
+- State "applicability" as the population/care-setting boundary supported by the source; \
+return null if it is not stated. Do not generalize observational association into a recommendation. \
 - Note a quality/limitation signal only if the text itself states it (e.g. open-label vs \
 blinded, funding source, an explicit limitation the authors name, early stopping). Do not \
 invent a generic caveat that isn't actually in the text.
@@ -99,7 +106,8 @@ invent a generic caveat that isn't actually in the text.
 
 Return ONLY a JSON object of the form:
   {"population": "...", "intervention": "...", "comparator": "...", "outcome": "...", \
-"clinical_bottom_line": "...", "study_quality_limitations": "...", "confidence": "high|medium|low"}
+"clinical_bottom_line": "...", "applicability": "...", \
+"study_quality_limitations": "...", "confidence": "high|medium|low"}
 Use null (not an empty string) for any field the text does not support.
 No prose before or after the JSON.
 """
@@ -208,6 +216,7 @@ def build_screening_record(fields: dict, *, canonical_key: str, citation_label: 
         "comparator": clean_text(fields.get("comparator")),
         "outcome": clean_text(fields.get("outcome")),
         "clinical_bottom_line": clean_text(fields.get("clinical_bottom_line")),
+        "applicability": clean_text(fields.get("applicability")),
         "study_quality_limitations": clean_text(fields.get("study_quality_limitations")),
         "confidence": confidence if confidence in ("high", "medium", "low") else None,
         "generated_by": model,
@@ -249,13 +258,25 @@ def generate_for_trial(client, model: str, trial: dict, abstract: dict | None, f
     )
 
 
+def canonical_screening_pool() -> list[dict]:
+    trials = load_json(TRIALS_FILE, [])
+    episodes = load_json(DATA_DIR / "episodes.json", [])
+    canonical, _, _ = build_evidence_repository(trials, episodes)
+    return [trial for trial in canonical if trial.get("canonical_key")]
+
+
+def _fingerprint(value) -> str:
+    payload = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def cmd_generate(args) -> int:
     trials = load_json(TRIALS_FILE, [])
     if not trials:
         print(f"No trials in {TRIALS_FILE}. Run extract_trials.py first.")
         return 1
 
-    canonical = [t for t in build_canonical_trial_records(trials) if t.get("canonical_key")]
+    canonical = canonical_screening_pool()
     if args.trial is not None:
         canonical = [t for t in canonical if t["canonical_key"] == args.trial]
         if not canonical:
@@ -353,7 +374,7 @@ def cmd_submit_batch(args) -> int:
         print(f"No trials in {TRIALS_FILE}. Run extract_trials.py first.")
         return 1
 
-    canonical = [t for t in build_canonical_trial_records(trials) if t.get("canonical_key")]
+    canonical = canonical_screening_pool()
     if args.trial is not None:
         canonical = [t for t in canonical if t["canonical_key"] == args.trial]
         if not canonical:
@@ -395,7 +416,10 @@ def cmd_submit_batch(args) -> int:
         "custom_map": custom_map,
         # Sanity check for collect: only valid if trials.json hasn't changed
         # between submit and collect.
-        "fingerprint": {"trials": len(trials)},
+        "fingerprint": {
+            "trials_sha256": _fingerprint(trials),
+            "custom_map_sha256": _fingerprint(custom_map),
+        },
     }
     save_json(BATCH_JOB_FILE, job)
 
@@ -455,9 +479,9 @@ def cmd_collect(args) -> int:
 
     trials = load_json(TRIALS_FILE, [])
     fingerprint = job.get("fingerprint") or {}
-    if fingerprint and fingerprint.get("trials") != len(trials):
-        print("WARNING: trials.json changed since submit; canonical_key mapping may be off. "
-              "Consider re-submitting rather than trusting these results.")
+    if fingerprint and fingerprint.get("trials_sha256") != _fingerprint(trials):
+        print("Refusing to collect: trials.json content changed since submit. Re-submit the batch.")
+        return 1
 
     custom_map = job["custom_map"]
     model = job.get("model")
@@ -510,7 +534,7 @@ def cmd_report(args) -> int:
 
     records = load_json(SCREENING_FILE, [])
     trials = load_json(TRIALS_FILE, [])
-    canonical = [t for t in build_canonical_trial_records(trials) if t.get("canonical_key")]
+    canonical = canonical_screening_pool()
     if not records:
         print(f"No screening records yet ({SCREENING_FILE} is empty). Run generate first.")
         resolvable = sum(1 for t in canonical if resolve_pmid(t.get("pubmed_url")))
@@ -541,6 +565,9 @@ def cmd_adjudicate(args) -> int:
     if args.action is None:
         print("Pass an action: --approve, --reject, or --reset.")
         return 1
+    if args.action == "approved" and not args.reviewer:
+        print("Approval requires --reviewer so human sign-off is attributable.")
+        return 1
     if not args.trial and not args.canonical_key:
         print("Pass --trial <substring> or --canonical-key <exact key> to select records.")
         return 1
@@ -558,9 +585,12 @@ def cmd_adjudicate(args) -> int:
         if args.action == "reset":
             record["review_status"] = "pending"
             record.pop("reviewed_at", None)
+            record.pop("reviewed_by", None)
         else:
             record["review_status"] = args.action
             record["reviewed_at"] = now
+            if args.reviewer:
+                record["reviewed_by"] = args.reviewer
 
     if touched:
         save_json(SCREENING_FILE, records)
@@ -570,9 +600,12 @@ def cmd_adjudicate(args) -> int:
 
 def cmd_apply(args) -> int:
     records = load_json(SCREENING_FILE, [])
-    approved = [r for r in records if r.get("review_status") == "approved"]
+    approved = [
+        r for r in records if r.get("review_status") == "approved" and r.get("reviewed_by")
+    ]
     if not approved:
-        print("No records marked review_status=\"approved\". Nothing to apply.")
+        save_json(APPROVED_FILE, [])
+        print("No attributable human-approved records; cleared the approved screening artifact.")
         return 0
     save_json(APPROVED_FILE, approved)
     print(f"Applied {len(approved)} approved screening record(s) -> {APPROVED_FILE}")
@@ -616,6 +649,7 @@ def main() -> int:
     a = sub.add_parser("adjudicate", help="Approve/reject/reset individual screening records")
     a.add_argument("--trial", default=None, help="Only records whose citation_label/canonical_key contains this")
     a.add_argument("--canonical-key", dest="canonical_key", default=None, help="Only the record with this exact key")
+    a.add_argument("--reviewer", default=None, help="Reviewer name/handle (required for approval)")
     action = a.add_mutually_exclusive_group()
     action.add_argument("--approve", dest="action", action="store_const", const="approved")
     action.add_argument("--reject", dest="action", action="store_const", const="rejected")

@@ -36,6 +36,8 @@ Model defaults to claude-opus-4-8; override with --model. Requires ANTHROPIC_API
 """
 
 import argparse
+import hashlib
+import json
 import re
 import sys
 import time
@@ -54,11 +56,41 @@ except ImportError:
     from pearl_coverage import compute_pearl_gap
 
 CANDIDATES_FILE = DATA_DIR / "candidate_pearls.json"
+PRIVATE_CANDIDATES_FILE = DATA_DIR / "private" / "candidate_pearls.json"
 APPROVED_FILE = DATA_DIR / "approved_pearls.json"
 BATCH_JOB_FILE = DATA_DIR / "candidate_pearls_batch.json"
 DEFAULT_MODEL = "claude-opus-4-8"
 MAX_TOKENS = 8000
 MIN_QUOTE_CHARS = 15  # a verifiable quote has to be substantial
+
+
+def _public_candidate(record: dict) -> dict:
+    """Tracked review metadata without republishing transcript excerpts."""
+    public = dict(record)
+    quote = public.pop("supporting_quote", "") or ""
+    public["supporting_quote_sha256"] = hashlib.sha256(quote.encode("utf-8")).hexdigest() if quote else None
+    public["supporting_quote_char_count"] = len(quote)
+    return public
+
+
+def load_full_candidates() -> list[dict]:
+    private = load_json(PRIVATE_CANDIDATES_FILE, [])
+    if private:
+        return private
+    # Backward-compatible migration path for repositories that still have quotes
+    # in the tracked artifact. `migrate-private` rewrites it safely.
+    return load_json(CANDIDATES_FILE, [])
+
+
+def save_candidate_files(records: list[dict]) -> None:
+    PRIVATE_CANDIDATES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    save_json(PRIVATE_CANDIDATES_FILE, records)
+    save_json(CANDIDATES_FILE, [_public_candidate(record) for record in records])
+
+
+def content_fingerprint(value) -> str:
+    payload = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 SYSTEM_PROMPT = """\
 You are a careful internal-medicine educator extracting a small number of concise, \
@@ -186,7 +218,7 @@ def build_pool(args, transcripts: list[dict]) -> list[dict]:
     if args.episode is not None:
         pool = [t for t in pool if t.get("episode_number") == args.episode]
 
-    existing = load_json(CANDIDATES_FILE, [])
+    existing = load_full_candidates()
     done_urls = {c["episode_url"] for c in existing}
     if not args.refresh:
         pool = [t for t in pool if t["episode_url"] not in done_urls]
@@ -221,7 +253,7 @@ def cmd_generate(args) -> int:
     print("This spends tokens and is owner-gated — nothing is published to pearls.json.\n")
 
     # Keep candidates for episodes not in this run; replace those we regenerate.
-    existing = load_json(CANDIDATES_FILE, [])
+    existing = load_full_candidates()
     regenerated_urls = {t["episode_url"] for t in pool}
     kept = [c for c in existing if c["episode_url"] not in regenerated_urls]
     added = 0
@@ -241,7 +273,7 @@ def cmd_generate(args) -> int:
         added += len(emit)
         print(f"  [{i+1}/{len(pool)}] #{num}: {len(verified)} verified"
               f"{f', {dropped} unverified' + (' dropped' if not args.keep_unverified else ' kept') if dropped else ''}")
-        save_json(CANDIDATES_FILE, kept)
+        save_candidate_files(kept)
 
     print(f"\nDone. {added} candidate pearls written to {CANDIDATES_FILE}.")
     if dropped_unverified and not args.keep_unverified:
@@ -305,7 +337,10 @@ def cmd_submit_batch(args) -> int:
         "custom_map": custom_map,
         # Sanity check for collect: only valid if transcripts.json/pearls.json
         # haven't changed between submit and collect.
-        "fingerprint": {"transcripts": len(transcripts)},
+        "fingerprint": {
+            "transcripts_sha256": content_fingerprint(transcripts),
+            "pool_episode_urls_sha256": content_fingerprint(sorted(custom_map.values())),
+        },
     }
     save_json(BATCH_JOB_FILE, job)
 
@@ -365,9 +400,10 @@ def cmd_collect(args) -> int:
 
     transcripts = load_json(TRANSCRIPTS_FILE, [])
     fingerprint = job.get("fingerprint") or {}
-    if fingerprint and fingerprint.get("transcripts") != len(transcripts):
-        print("WARNING: transcripts.json changed since submit; episode mapping may be off. "
-              "Consider re-submitting rather than trusting these results.")
+    current_fingerprint = content_fingerprint(transcripts)
+    if fingerprint and fingerprint.get("transcripts_sha256") != current_fingerprint:
+        print("Refusing to collect: transcripts.json content changed since submit. Re-submit the batch.")
+        return 1
 
     transcripts_by_url = {t["episode_url"]: t for t in transcripts if t.get("episode_url")}
     custom_map = job["custom_map"]
@@ -375,7 +411,7 @@ def cmd_collect(args) -> int:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     batch_urls = set(custom_map.values())
-    existing = load_json(CANDIDATES_FILE, [])
+    existing = load_full_candidates()
     kept = [c for c in existing if c["episode_url"] not in batch_urls]
 
     added = 0
@@ -402,7 +438,7 @@ def cmd_collect(args) -> int:
         added += len(emit)
         episodes_ok += 1
 
-    save_json(CANDIDATES_FILE, kept)
+    save_candidate_files(kept)
     print(f"\nDone. {episodes_ok} episode(s) processed, {added} candidate pearls written to {CANDIDATES_FILE}.")
     if errored:
         print(f"{errored} request(s) errored and were skipped.")
@@ -416,7 +452,7 @@ def cmd_collect(args) -> int:
 def cmd_report(args) -> int:
     from collections import Counter
 
-    candidates = load_json(CANDIDATES_FILE, [])
+    candidates = load_full_candidates()
     if not candidates:
         print(f"No candidates yet ({CANDIDATES_FILE} is empty).")
         return 0
@@ -435,8 +471,10 @@ def cmd_report(args) -> int:
 
 
 def cmd_promote(args) -> int:
-    candidates = load_json(CANDIDATES_FILE, [])
-    approved = [c for c in candidates if c.get("review_status") == "approved"]
+    candidates = load_full_candidates()
+    approved = [
+        c for c in candidates if c.get("review_status") == "approved" and c.get("reviewed_by")
+    ]
     if not approved:
         print("No candidates marked review_status=\"approved\". Nothing to promote.")
         return 0
@@ -446,9 +484,69 @@ def cmd_promote(args) -> int:
         print(f"Refusing to promote {len(unverified)} approved candidate(s) with an unverified "
               f"quote. Re-review, or pass --allow-unverified to override.")
         return 1
-    save_json(APPROVED_FILE, approved)
+    save_json(APPROVED_FILE, [_public_candidate(candidate) for candidate in approved])
     print(f"Promoted {len(approved)} approved pearl(s) to {APPROVED_FILE}.")
     print("These stay separate from the deterministic data/pearls.json by design.")
+    return 0
+
+
+def cmd_adjudicate(args) -> int:
+    candidates = load_full_candidates()
+    if args.action == "approved" and not args.reviewer:
+        print("Approval requires --reviewer so human sign-off is attributable.")
+        return 1
+    if args.episode is None and not args.statement:
+        print("Pass --episode or --statement to select candidates; refusing a bulk decision.")
+        return 1
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    touched = 0
+    for candidate in candidates:
+        if args.episode is not None and candidate.get("episode_number") != args.episode:
+            continue
+        if args.statement and args.statement.lower() not in candidate.get("statement", "").lower():
+            continue
+        touched += 1
+        if args.action == "reset":
+            candidate["review_status"] = "pending"
+            candidate.pop("reviewed_at", None)
+            candidate.pop("reviewed_by", None)
+            candidate.pop("review_note", None)
+        else:
+            candidate["review_status"] = args.action
+            candidate["reviewed_at"] = now
+            if args.reviewer:
+                candidate["reviewed_by"] = args.reviewer
+            if args.note:
+                candidate["review_note"] = args.note
+    if touched:
+        save_candidate_files(candidates)
+    print(f"Updated {touched} candidate(s) in the private review sidecar.")
+    return 0
+
+
+def cmd_migrate_private(args) -> int:
+    candidates = load_json(CANDIDATES_FILE, [])
+    if not candidates:
+        print(f"No candidates in {CANDIDATES_FILE}.")
+        return 0
+    if not any(candidate.get("supporting_quote") for candidate in candidates):
+        print("Tracked candidates are already sanitized.")
+        return 0
+    save_candidate_files(candidates)
+    print(f"Moved full candidate records to ignored {PRIVATE_CANDIDATES_FILE}.")
+    print(f"Sanitized {CANDIDATES_FILE} now contains quote hashes/lengths only.")
+    return 0
+
+
+def cmd_prune_gap(args) -> int:
+    candidates = load_full_candidates()
+    episodes = load_json(EPISODES_FILE, [])
+    pearls = load_json(PEARLS_FILE, [])
+    transcripts = load_json(TRANSCRIPTS_FILE, [])
+    gap_urls = {row["episode_url"] for row in compute_pearl_gap(episodes, pearls, transcripts)}
+    kept = [candidate for candidate in candidates if candidate.get("episode_url") in gap_urls]
+    save_candidate_files(kept)
+    print(f"Kept {len(kept)} candidates for current zero-pearl episodes; pruned {len(candidates) - len(kept)} stale candidates.")
     return 0
 
 
@@ -489,10 +587,27 @@ def main() -> int:
     r = sub.add_parser("report", help="Print candidate counts and review status")
     r.set_defaults(func=cmd_report)
 
+    a = sub.add_parser("adjudicate", help="Approve/reject/reset candidates in the private review sidecar")
+    a.add_argument("--episode", type=int, default=None)
+    a.add_argument("--statement", default=None, help="Statement substring selector")
+    action = a.add_mutually_exclusive_group(required=True)
+    action.add_argument("--approve", dest="action", action="store_const", const="approved")
+    action.add_argument("--reject", dest="action", action="store_const", const="rejected")
+    action.add_argument("--reset", dest="action", action="store_const", const="reset")
+    a.add_argument("--reviewer", default=None, help="Reviewer name/handle (required for approval)")
+    a.add_argument("--note", default=None)
+    a.set_defaults(func=cmd_adjudicate)
+
     p = sub.add_parser("promote", help="Copy approved candidates to approved_pearls.json")
     p.add_argument("--allow-unverified", action="store_true",
                    help="Allow promoting approved candidates whose quote wasn't verified")
     p.set_defaults(func=cmd_promote)
+
+    m = sub.add_parser("migrate-private", help="Move tracked transcript quotes into ignored private review data")
+    m.set_defaults(func=cmd_migrate_private)
+
+    q = sub.add_parser("prune-gap", help="Remove candidates for episodes that now have show-note pearls")
+    q.set_defaults(func=cmd_prune_gap)
 
     args = parser.parse_args()
     return args.func(args)

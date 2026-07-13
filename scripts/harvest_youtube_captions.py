@@ -1,7 +1,7 @@
 """
 Fill transcript coverage gaps with YouTube auto-captions.
 
-Only ~94/555 episodes publish an official transcript (see scripts/fetch_transcripts.py).
+Only a minority of episodes publish an official transcript (see scripts/fetch_transcripts.py).
 For the rest, the show's YouTube channel often has the full episode video with
 auto-generated captions. This script enumerates the channel, matches videos to
 episodes by episode number in the title, downloads the English auto-captions for

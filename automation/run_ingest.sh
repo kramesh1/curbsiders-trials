@@ -33,11 +33,20 @@ if [[ -f "${REPO_DIR}/.env" ]]; then
     set +a
 fi
 
-# Prefer the project virtualenv; fall back to whatever python3 is on PATH.
+# Prefer and, by default, require the project virtualenv. An unattended job
+# silently falling back to a different system interpreter is not reproducible.
 if [[ -x "${REPO_DIR}/.venv/bin/python" ]]; then
     PYTHON="${REPO_DIR}/.venv/bin/python"
-else
+elif [[ "${CURBSIDERS_ALLOW_SYSTEM_PYTHON:-0}" == "1" ]]; then
     PYTHON="$(command -v python3 || command -v python)"
+else
+    log "missing .venv/bin/python; run python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    exit 1
+fi
+
+if ! "${PYTHON}" -c 'import bs4, curl_cffi' >/dev/null 2>&1; then
+    log "python environment is missing required dependencies; install requirements.txt"
+    exit 1
 fi
 
 # Prevent overlapping runs. flock is available on Linux; macOS lacks it, so fall

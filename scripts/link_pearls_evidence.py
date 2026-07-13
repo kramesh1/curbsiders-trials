@@ -41,12 +41,15 @@ applies a JSON feedback file via --from-file -- this curates *which* links survi
 within a pearl. `adjudicate --record` instead sets the whole record's review_status
 -- a reviewer's explicit sign-off that they've checked the pearl's surviving links
 against the show notes. `apply` only ever merges records whose review_status is
-"approved" (pass --include-pending to bypass that gate), and within an approved
-record drops any link marked rejected while keeping its siblings. This two-step
+"approved", and within an approved record drops any link marked rejected while
+keeping its siblings. There is deliberately no publication bypass for pending or
+auto-triaged output. This two-step
 gate exists so unreviewed model output never reaches the published site by default.
 """
 
 import argparse
+import hashlib
+import json
 import sys
 import time
 from datetime import datetime, timezone
@@ -54,16 +57,22 @@ from pathlib import Path
 
 try:
     from scripts.extract_trials import DATA_DIR, load_json, save_json, parse_json_response
+    from scripts.evidence_repository import build_evidence_repository, evidence_by_episode
     from scripts.extract_pearls import PEARLS_FILE
     from scripts.pearl_utils import _pearl_dedupe_key, trial_canonical_key
+    from scripts.pubmed_utils import attach_screening
     from scripts.trial_utils import clean_text, normalize_pubmed_url
 except ImportError:
     from extract_trials import DATA_DIR, load_json, save_json, parse_json_response
+    from evidence_repository import build_evidence_repository, evidence_by_episode
     from extract_pearls import PEARLS_FILE
     from pearl_utils import _pearl_dedupe_key, trial_canonical_key
+    from pubmed_utils import attach_screening
     from trial_utils import clean_text, normalize_pubmed_url
 
 TRIALS_FILE = DATA_DIR / "trials.json"
+EPISODES_FILE = DATA_DIR / "episodes.json"
+SCREENING_APPROVED_FILE = DATA_DIR / "trial_screening_approved.json"
 LINKS_FILE = DATA_DIR / "pearl_evidence_links.json"
 LINKED_PEARLS_FILE = DATA_DIR / "pearls_linked.json"
 BATCH_JOB_FILE = DATA_DIR / "pearl_evidence_batch.json"
@@ -115,6 +124,19 @@ def group_by_episode(rows: list[dict]) -> dict[str, list[dict]]:
     return grouped
 
 
+def load_evidence_by_episode() -> dict[str, list[dict]]:
+    canonical, _, _ = build_evidence_repository(
+        load_json(TRIALS_FILE, []), load_json(EPISODES_FILE, [])
+    )
+    canonical = attach_screening(canonical, load_json(SCREENING_APPROVED_FILE, []))
+    return evidence_by_episode(canonical)
+
+
+def _fingerprint(value) -> str:
+    payload = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def episode_trial_pool(episode_trials: list[dict]) -> list[dict]:
     """The episode's trials that have a stable identity, deduped by canonical_key.
 
@@ -125,7 +147,7 @@ def episode_trial_pool(episode_trials: list[dict]) -> list[dict]:
     pool: list[dict] = []
     seen: set[str] = set()
     for trial in episode_trials:
-        key = trial_canonical_key(trial)
+        key = trial.get("canonical_key") or trial_canonical_key(trial)
         if not key or key in seen:
             continue
         seen.add(key)
@@ -151,9 +173,17 @@ def _trial_display(trial: dict) -> str:
         meta.append(f"n={trial['sample_size']}")
     if meta:
         bits.append(f"({', '.join(meta)})")
-    summary = clean_text(trial.get("brief_summary")) or clean_text(trial.get("context_topic"))
+    summary = (
+        clean_text(trial.get("clinical_bottom_line"))
+        or clean_text(trial.get("outcome"))
+        or clean_text(trial.get("brief_summary"))
+        or clean_text(trial.get("context_topic"))
+    )
     if summary:
         bits.append(f"- {summary}")
+    applicability = clean_text(trial.get("applicability"))
+    if applicability:
+        bits.append(f"[applies to: {applicability}]")
     return " ".join(bits)
 
 
@@ -203,7 +233,7 @@ def verify_links(raw_links, pearls: list[dict], pool: list[dict]) -> tuple[dict[
             dropped += 1
             continue
         trial = pool[ti]
-        canonical_key = trial_canonical_key(trial)
+        canonical_key = trial.get("canonical_key") or trial_canonical_key(trial)
         support = link.get("support")
         if support not in ("direct", "background"):
             dropped += 1
@@ -287,13 +317,12 @@ def eligible_episode_urls(pearls_by_ep: dict, trials_by_ep: dict, *, episode: in
 
 def cmd_generate(args) -> int:
     pearls = load_json(PEARLS_FILE, [])
-    trials = load_json(TRIALS_FILE, [])
     if not pearls:
         print(f"No pearls in {PEARLS_FILE}. Run extract_pearls.py first.")
         return 1
 
     pearls_by_ep = group_by_episode(pearls)
-    trials_by_ep = group_by_episode(trials)
+    trials_by_ep = load_evidence_by_episode()
 
     episode_urls = eligible_episode_urls(pearls_by_ep, trials_by_ep, episode=args.episode)
     if args.episode is not None and not episode_urls:
@@ -382,13 +411,12 @@ def build_batch_requests(episode_urls, pearls_by_ep, trials_by_ep, model) -> tup
 
 def cmd_submit_batch(args) -> int:
     pearls = load_json(PEARLS_FILE, [])
-    trials = load_json(TRIALS_FILE, [])
     if not pearls:
         print(f"No pearls in {PEARLS_FILE}. Run extract_pearls.py first.")
         return 1
 
     pearls_by_ep = group_by_episode(pearls)
-    trials_by_ep = group_by_episode(trials)
+    trials_by_ep = load_evidence_by_episode()
     episode_urls = eligible_episode_urls(pearls_by_ep, trials_by_ep, episode=args.episode)
 
     existing = load_json(LINKS_FILE, [])
@@ -421,7 +449,10 @@ def cmd_submit_batch(args) -> int:
         "custom_map": custom_map,
         # Sanity check for collect: the index->citation mapping is only valid if
         # pearls.json/trials.json haven't changed between submit and collect.
-        "fingerprint": {"pearls": len(pearls), "trials": len(trials)},
+        "fingerprint": {
+            "pearls_sha256": _fingerprint(pearls),
+            "evidence_by_episode_sha256": _fingerprint(trials_by_ep),
+        },
     }
     save_json(BATCH_JOB_FILE, job)
 
@@ -482,14 +513,16 @@ def cmd_collect(args) -> int:
         time.sleep(args.poll_interval)
 
     pearls = load_json(PEARLS_FILE, [])
-    trials = load_json(TRIALS_FILE, [])
     fingerprint = job.get("fingerprint") or {}
-    if fingerprint and (fingerprint.get("pearls") != len(pearls) or fingerprint.get("trials") != len(trials)):
-        print("WARNING: pearls.json/trials.json changed since submit; index mapping may be off. "
-              "Consider re-submitting rather than trusting these links.")
+    trials_by_ep = load_evidence_by_episode()
+    if fingerprint and (
+        fingerprint.get("pearls_sha256") != _fingerprint(pearls)
+        or fingerprint.get("evidence_by_episode_sha256") != _fingerprint(trials_by_ep)
+    ):
+        print("Refusing to collect: pearl/evidence content changed since submit. Re-submit the batch.")
+        return 1
 
     pearls_by_ep = group_by_episode(pearls)
-    trials_by_ep = group_by_episode(trials)
     custom_map = job["custom_map"]
     model = job.get("model")
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -565,7 +598,9 @@ def cmd_report(args) -> int:
     link_adjud = Counter(link_status(l, r) for r in links for l in r["links"])
     direct = sum(1 for r in links for l in r["links"] if l.get("support") == "direct")
     total_links = sum(len(r["links"]) for r in links)
-    approved_records = [r for r in links if r.get("review_status") == "approved"]
+    approved_records = [
+        r for r in links if r.get("review_status") == "approved" and r.get("reviewed_by")
+    ]
     current_pearl_keys = {
         (pearl.get("episode_url"), _pearl_dedupe_key(pearl.get("pearl", "")))
         for pearl in pearls
@@ -622,16 +657,13 @@ def cmd_apply(args) -> int:
         print(f"No links to apply ({LINKS_FILE} is empty).")
         return 1
 
-    accepted = ("approved",) if not args.include_pending else ("approved", "pending")
     links_by_key = {
         (r["episode_url"], r["pearl_key"]): r
         for r in links
-        if r.get("review_status") in accepted
+        if r.get("review_status") == "approved" and r.get("reviewed_by")
     }
     if not links_by_key:
-        print("No links with review_status in "
-              f"{accepted}. Mark links \"approved\" (or pass --include-pending).")
-        return 1
+        print("No human-approved links. Writing the base pearl artifact with no model evidence links.")
 
     applied = 0
     dropped_links = 0
@@ -739,7 +771,8 @@ def apply_decision(links: list[dict], *, decision: str, note, reviewed_at: str,
 
 
 def apply_record_decision(links: list[dict], *, decision: str, note, reviewed_at: str,
-                          record_sel: dict, dry_run: bool = False) -> int:
+                          record_sel: dict, reviewer: str | None = None,
+                          dry_run: bool = False) -> int:
     """Set (or clear) the whole record's review_status -- the gate `apply` checks.
 
     This is the reviewer's explicit sign-off that a pearl's surviving links (after
@@ -757,9 +790,12 @@ def apply_record_decision(links: list[dict], *, decision: str, note, reviewed_at
             record["review_status"] = "pending"
             record.pop("reviewed_at", None)
             record.pop("review_note", None)
+            record.pop("reviewed_by", None)
         else:
             record["review_status"] = decision  # "approved" | "rejected"
             record["reviewed_at"] = reviewed_at
+            if reviewer:
+                record["reviewed_by"] = reviewer
             if note is not None:
                 record["review_note"] = note
     return touched
@@ -820,6 +856,9 @@ def cmd_adjudicate(args) -> int:
         if args.action is None:
             print("Pass an action: --reject, --approve, or --reset (or use --from-file).")
             return 1
+        if args.record and args.action == "approved" and not args.reviewer:
+            print("Record approval requires --reviewer so human sign-off is attributable.")
+            return 1
         if args.record and link_sel:
             print("--record signs off the whole record's review_status; it cannot be combined "
                   "with link-level selectors (--trial/--canonical-key/--confidence/--support).")
@@ -833,12 +872,16 @@ def cmd_adjudicate(args) -> int:
     if not ops:
         print("Nothing to adjudicate.")
         return 0
+    if any(scope == "record" and decision == "approved" for _, _, decision, _, scope in ops) and not args.reviewer:
+        print("Record approval requires --reviewer so human sign-off is attributable.")
+        return 1
 
     total = 0
     for record_sel, link_sel, decision, note, scope in ops:
         if scope == "record":
             total += apply_record_decision(links, decision=decision, note=note, reviewed_at=reviewed_at,
-                                           record_sel=record_sel, dry_run=args.dry_run)
+                                           record_sel=record_sel, reviewer=args.reviewer,
+                                           dry_run=args.dry_run)
         else:
             total += apply_decision(links, decision=decision, note=note, reviewed_at=reviewed_at,
                                     record_sel=record_sel, link_sel=link_sel, dry_run=args.dry_run)
@@ -883,8 +926,6 @@ def main() -> int:
     r.set_defaults(func=cmd_report)
 
     a = sub.add_parser("apply", help="Merge reviewed links into data/pearls_linked.json")
-    a.add_argument("--include-pending", action="store_true",
-                   help="Also apply links still marked pending (default: approved only)")
     a.add_argument("--include-background", action="store_true",
                    help="Also publish reviewed background-support links (default: direct evidence only)")
     a.add_argument("--include-low-confidence", action="store_true",
@@ -914,6 +955,8 @@ def main() -> int:
     action.add_argument("--reset", dest="action", action="store_const", const="reset",
                         help="Clear per-link status (links fall back to their record's status)")
     d.add_argument("--note", default=None, help="Free-text review note stored on each touched link")
+    d.add_argument("--reviewer", default=None,
+                   help="Reviewer name/handle (required when approving a whole record)")
     d.add_argument("--from-file", dest="from_file", default=None,
                    help="Apply a JSON list of decision objects instead of CLI selectors")
     d.add_argument("--dry-run", action="store_true", help="Show what would change without writing")

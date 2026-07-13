@@ -237,7 +237,7 @@ def fetch_pmc_fulltext(pmcid: str, *, api_key: str | None = None, email: str | N
 
 _SCREENING_FIELDS = (
     "population", "intervention", "comparator", "outcome", "clinical_bottom_line",
-    "study_quality_limitations",
+    "applicability", "study_quality_limitations",
 )
 
 
