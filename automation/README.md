@@ -1,16 +1,15 @@
-# Automating the weekly ingest
+# Automating Weekly Ingest
 
 `scripts/ingest.py` picks up new Curbsiders episodes and rebuilds the deterministic
 layers: enrichment, pearls, the show-note evidence hyperlink inventory, and the
-published site JSON. It is **idempotent and safe to run on a timer**: scraping and
-transcript fetching are free, and the paid trial-extraction stage is skipped entirely
-when no new episode is pending — so a run that finds nothing new spends ~0 tokens.
+published site JSON. It is **idempotent and safe to run on a timer**: the
+trial-extraction stage is skipped entirely when no new episode is pending.
 
 Everything here drives that from a schedule. `run_ingest.sh` is the entry point:
-it resolves the repo, loads `.env` (for `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`),
-requires and executes `.venv/bin/python`, takes a lock so runs can't overlap, and
-appends to `ingest.log`. It fails visibly if the virtual environment or dependencies
-are absent; set `CURBSIDERS_ALLOW_SYSTEM_PYTHON=1` only for an intentional override.
+it resolves the repo, loads `.env` for API keys, requires and executes
+`.venv/bin/python`, takes a lock so runs cannot overlap, and appends to
+`ingest.log`. It fails visibly if the virtual environment or dependencies are
+absent; set `CURBSIDERS_ALLOW_SYSTEM_PYTHON=1` only for an intentional override.
 
 ## Quick test (no schedule, no spend)
 
@@ -25,7 +24,7 @@ Pass extra flags straight through, or set `INGEST_ARGS`:
 INGEST_ARGS="--backend anthropic --workers 4" automation/run_ingest.sh
 ```
 
-## macOS — launchd (recommended)
+## macOS - launchd (recommended)
 
 1. Point the template at your checkout and install it:
 
@@ -58,13 +57,13 @@ Note: launchd jobs run in a minimal environment. Keep API keys in the repo's
 ## Linux / cron
 
 ```cron
-# Sunday 06:00 — weekly incremental ingest
+# Sunday 06:00 - weekly incremental ingest
 0 6 * * 0  /path/to/curbsiders_to_trials/automation/run_ingest.sh
 ```
 
-## What the schedule does *not* do
+## What the schedule does not do
 
-Model **generation** for pearl→evidence links stays owner-gated — it spends tokens
+Model **generation** for pearl-to-evidence links stays owner-gated. It spends tokens
 and is not scheduled. `ingest.py` does re-apply already attributable approvals so
 published sidecars cannot go stale. After a run brings in a new episode, generate
 and adjudicate deliberately:

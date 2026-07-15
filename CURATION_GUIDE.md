@@ -1,16 +1,26 @@
-# Curbsiders Evidence Curation Guide
+# Evidence Curation Guide
 
-This repository is currently strong enough to browse, search, and begin human review. Treat it as an extracted evidence map, not yet as a fully adjudicated clinical reference.
+This guide is for clinicians and maintainers reviewing the extracted Curbsiders
+evidence map. Treat the site as source-discovery infrastructure, not as a fully
+adjudicated clinical reference.
+
+The project is independent and is not affiliated with, endorsed by, or reviewed
+by The Curbsiders. Do not present reviewed records as Curbsiders-approved unless
+that approval is separately obtained.
 
 ## Teaching Use
 
 Use the site for two teaching workflows:
 
 1. **Prepare a chalk talk**
-   Start in `Teaching pearls` with `Reviewed evidence only` when you want quick practice-changing takeaways. Those links come from the owner-gated `evidence_links` layer, not the noisy term-overlap citation layer.
+   Start in `Teaching pearls` with `Reviewed evidence only` when you want
+   pearls that have survived the owner-gated `evidence_links` path.
 
 2. **Trace a Curbsiders citation**
-   Open a record, follow the episode backlink or source hyperlink, and compare the record summary against the original show-note context before using it in teaching. Evidence cards now also show reviewed teaching pearls linked back to that evidence when the pearl→evidence link has been signed off.
+   Open a record, follow the episode backlink or source hyperlink, and compare
+   the record summary against the original show-note context before using it in
+   teaching. Evidence cards also show reviewed teaching pearls linked back to
+   that evidence when the pearl-to-evidence link has been signed off.
 
 Use the `Evidence browser` by condition, drug, trial name, or pearl language when you need the broader citation map. Filter by `RCT`, `systematic review`, `meta-analysis`, or `guideline` to separate primary evidence from synthesis and current-practice sources.
 
@@ -19,7 +29,7 @@ Use the `Evidence browser` by condition, drug, trial name, or pearl language whe
 Review in this order:
 
 1. **Newest episodes**
-   Start with episodes `530` through `521` because these are highest-value for current teaching.
+   Start with the newest 10 episodes because these are usually highest-value for current teaching.
 
 2. **High-impact topics**
    Review hypertension, diabetes/cardiorenal protection, anticoagulation, antibiotic duration, ASCVD prevention, obesity/nutrition, and screening.
@@ -46,7 +56,9 @@ For each reviewed record, confirm:
 - `specialty_tags` are useful for discovery.
 - Episode backlinks point to the right source episode.
 
-For pearl→evidence links specifically, treat `supporting_citations` as heuristic same-episode overlap only. A citation should be used for teaching only after it survives the `evidence_links` adjudication path.
+For pearl-to-evidence links specifically, treat `supporting_citations` as
+heuristic same-episode overlap only. A citation should be used for teaching only
+after it survives the `evidence_links` adjudication path.
 
 ## Show-note evidence layer
 
@@ -58,12 +70,12 @@ python scripts/build_site.py                   # merge show-note evidence into d
 python scripts/validate_repository.py          # checks dangling pearl links and show-note evidence matches
 ```
 
-## Adjudicating pearl evidence links
+## Adjudicating Pearl Evidence Links
 
-The model-assisted pearl→evidence links (`data/pearl_evidence_links.json`) are reviewed
+The model-assisted pearl-to-evidence links (`data/pearl_evidence_links.json`) are reviewed
 at **two levels**. First, individual links are curated so a single off-topic study can be
 dropped without discarding a pearl's good citations. Second, once you're satisfied with a
-pearl's surviving links, you explicitly sign off the **whole record** — `apply` only ever
+pearl's surviving links, you explicitly sign off the **whole record**; `apply` only ever
 merges records marked `"approved"` at the record level, so nothing reaches the published
 site without that explicit sign-off:
 
@@ -85,8 +97,9 @@ to apply a batch of captured decisions (add `"scope": "record"` to an entry to s
 record instead of a link). Rejected links are always dropped by `apply`; there is no
 pending/auto-triaged publication bypass.
 
-As of the latest rebuild, `398` model-drafted records are `auto_triaged` and `447` are
-`pending`. None is attributable human approval, so all are withheld from the public site.
+As of July 15, 2026, `398` model-drafted records are `auto_triaged` and `447`
+are `pending`. None has attributable human approval, so all are withheld from
+the public site.
 
 ## Local QA Commands
 
@@ -107,3 +120,5 @@ Run `build_site.py` after any change to `data/trials.json`; otherwise the browse
 - Episode dates are populated from official RSS for `432/558` cached pages; older/non-numbered archive entries remain unknown rather than guessed.
 - `study_type = "other"` remains overused and should be tightened during review.
 - Curbsiders show notes vary in citation detail, so not every record can be fully enriched without external lookup.
+- This repository does not grant rights to redistribute full-episode transcripts;
+  generated transcript caches are local working artifacts only.
